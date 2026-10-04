@@ -1,0 +1,141 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id           String   @id @default(uuid())
+  email        String   @unique
+  passwordHash String
+  name         String
+  company      String
+  phone        String?
+  joinWhatsapp Boolean  @default(false)
+  isVerified   Boolean  @default(false)
+  verificationToken String?
+  referralCode String?  @unique
+  role         String   // "cliente" or "colaborador"
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  workflows    UserWorkflow[]
+  credentials  Credential[]
+  projects     Project[]
+  referredContacts FormSubmission[] @relation("UserToReferral")
+}
+
+model WorkflowTemplate {
+  id             String   @id @default(uuid())
+  typeIdentifier String   @unique // Ej. "lead_collector", "email_sender"
+  name           String
+  description    String?
+  requiredCreds  String[] // Nombres de las credenciales requeridas, ej: ["google_maps_api", "sendgrid_api"]
+  configSchema   Json?    // Esquema de configuración esperada (ej. JSON Schema)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  userWorkflows  UserWorkflow[]
+}
+
+model Credential {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type      String   // Ej. "google_maps_api", "sendgrid_api"
+  name      String   // Nombre dado por el usuario, ej. "Mi API Key de Maps"
+  encrypted String   // Valor encriptado de la credencial
+  iv        String   // Vector de inicialización para la desencriptación
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  workflows UserWorkflow[] // Relación con los workflows que usan esta credencial
+}
+
+model UserWorkflow {
+  id             String           @id @default(uuid())
+  userId         String
+  user           User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  templateId     String
+  template       WorkflowTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  name           String
+  isActive       Boolean          @default(true)
+  config         Json?            // Configuración específica del usuario (ej. búsqueda="hoteles en madrid")
+  projectId      String?
+  project        Project?         @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+
+  credentials    Credential[]
+  executions     WorkflowExecution[]
+  formSubmissions FormSubmission[]
+}
+
+model WorkflowExecution {
+  id             String       @id @default(uuid())
+  userWorkflowId String
+  userWorkflow   UserWorkflow @relation(fields: [userWorkflowId], references: [id], onDelete: Cascade)
+  status         String       // "pending", "running", "success", "error"
+  logs           Json?        // Array de logs o mensajes de ejecución
+  resultData     Json?        // Resultado de la ejecución (ej. lista de leads obtenidos)
+  startedAt      DateTime     @default(now())
+  completedAt    DateTime?
+}
+
+model FormSubmission {
+  id               String   @id @default(uuid())
+  workflowId       String
+  workflow         UserWorkflow @relation(fields: [workflowId], references: [id], onDelete: Cascade)
+  name             String?
+  email            String?
+  payload          Json
+  referredByUserId String?
+  referredBy       User?    @relation("UserToReferral", fields: [referredByUserId], references: [id])
+  createdAt        DateTime @default(now())
+}
+
+model Project {
+  id          String   @id @default(uuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name        String
+  industry    String?
+  description String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  workflows   UserWorkflow[]
+  leads       Lead[]
+}
+
+model Lead {
+  id            String     @id @default(uuid())
+  projectId     String     
+  project       Project    @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  businessName  String?
+  contactName   String?
+  email         String?
+  phone         String?
+  website       String?
+  source        String
+  status        String     @default("NUEVO")
+  
+  activities    Activity[]
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+}
+
+model Activity {
+  id          String   @id @default(uuid())
+  leadId      String
+  lead        Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  type        String   // "AUTO_EMAIL", "MANUAL_NOTE", "CALL", "MEETING"
+  title       String
+  description String?  @db.Text
+  metadata    Json?
+  
+  createdAt   DateTime @default(now())
+}
