@@ -11,7 +11,7 @@ async function main() {
       configSchema.properties.calendarId = {
         type: "string",
         title: "Calendario Asignado para Reuniones",
-        description: "Selecciona el calendario al que el cliente ser· dirigido en el correo",
+        description: "Selecciona el calendario al que el cliente ser√° dirigido en el correo",
         format: "calendar"
       };
       await prisma.workflowTemplate.update({
@@ -25,7 +25,7 @@ async function main() {
       const configSchema = typeof t.configSchema === 'string' ? JSON.parse(t.configSchema) : t.configSchema;
       configSchema.configFields = configSchema.configFields || [];
       // Also add it here since it uses a different format, but wait, the prompt explicitly said:
-      // "AÒade a la propiedad properties del esquema de la plantilla lo siguiente:"
+      // "A√±ade a la propiedad properties del esquema de la plantilla lo siguiente:"
       // "json" ...
       // So maybe they updated form_contact_handler to use properties too? 
       // Let's just add properties.calendarId anyway so it's consistent.
@@ -33,7 +33,7 @@ async function main() {
       configSchema.properties.calendarId = {
         type: "string",
         title: "Calendario Asignado para Reuniones",
-        description: "Selecciona el calendario al que el cliente ser· dirigido en el correo",
+        description: "Selecciona el calendario al que el cliente ser√° dirigido en el correo",
         format: "calendar"
       };
       await prisma.workflowTemplate.update({

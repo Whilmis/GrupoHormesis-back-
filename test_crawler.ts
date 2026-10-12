@@ -12,7 +12,7 @@ async function runTest() {
     console.log(JSON.stringify(result, null, 2));
     console.log('=========================');
   } catch(e) {
-    console.error('Falló la prueba:', e);
+    console.error('FallÃ³ la prueba:', e);
   }
 }
 

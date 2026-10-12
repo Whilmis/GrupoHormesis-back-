@@ -16,7 +16,7 @@ async function test() {
             calendarId: 'primary',
             conferenceDataVersion: 1,
             requestBody: {
-                summary: 'Reunión de prueba',
+                summary: 'ReuniÃ³n de prueba',
                 description: 'Prueba desde test_meet.js',
                 start: { dateTime: new Date(Date.now() + 86400000).toISOString() }, // Tomorrow
                 end: { dateTime: new Date(Date.now() + 90000000).toISOString() }, // Tomorrow + 1h
