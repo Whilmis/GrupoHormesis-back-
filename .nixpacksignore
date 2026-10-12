@@ -1,0 +1,7 @@
+node_modules
+*.log
+*.bak
+*.sql
+*.py
+*.cjs
+prisma/dev.db
