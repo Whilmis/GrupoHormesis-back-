@@ -4,19 +4,24 @@ import prisma from '../config/db';
 export const getProjectLeads = async (req: Request, res: Response) => {
   try {
     const userId = (req as any).user.id;
+    const userRole = (req as any).user.role;
     const { projectId } = req.params;
 
-    // Verify project belongs to user
-    const project = await prisma.project.findUnique({
-      where: { id: projectId, userId }
-    });
-
-    if (!project) {
-      return res.status(404).json({ error: 'Project not found' });
+    if (userRole !== 'colaborador' && userRole !== 'admin') {
+      const project = await prisma.project.findUnique({
+        where: { id: projectId, userId }
+      });
+      if (!project) {
+        return res.status(404).json({ error: 'Project not found' });
+      }
     }
 
     const leads = await prisma.lead.findMany({
       where: { projectId },
+      include: {
+        meetings: true,
+        _count: { select: { activities: true } }
+      },
       orderBy: { createdAt: 'desc' }
     });
 
@@ -26,20 +31,106 @@ export const getProjectLeads = async (req: Request, res: Response) => {
   }
 };
 
-export const getLeadActivities = async (req: Request, res: Response) => {
+export const getColaboradorLeads = async (req: Request, res: Response) => {
   try {
-    const userId = (req as any).user.id;
-    const { leadId } = req.params;
+    const { status, search } = req.query;
 
-    // Verify lead belongs to a project owned by the user
-    const lead = await prisma.lead.findUnique({
-      where: { id: leadId },
-      include: { project: true }
+    const where: any = {};
+    if (status && typeof status === 'string' && status !== 'ALL') {
+      where.status = status;
+    }
+    if (search && typeof search === 'string') {
+      where.OR = [
+        { businessName: { contains: search, mode: 'insensitive' } },
+        { contactName: { contains: search, mode: 'insensitive' } },
+        { email: { contains: search, mode: 'insensitive' } },
+        { phone: { contains: search, mode: 'insensitive' } },
+        { website: { contains: search, mode: 'insensitive' } }
+      ];
+    }
+
+    const leads = await prisma.lead.findMany({
+      where,
+      include: {
+        project: {
+          select: { id: true, name: true, industry: true }
+        },
+        meetings: {
+          orderBy: { startTime: 'desc' },
+          take: 1
+        },
+        _count: {
+          select: { activities: true }
+        }
+      },
+      orderBy: { createdAt: 'desc' }
     });
 
-    if (!lead || lead.project.userId !== userId) {
-      return res.status(404).json({ error: 'Lead not found' });
+    res.json(leads);
+  } catch (error: any) {
+    res.status(500).json({ error: 'Error fetching colaborador leads', details: error.message });
+  }
+};
+
+export const updateLeadStatus = async (req: Request, res: Response) => {
+  try {
+    const { leadId } = req.params;
+    const { status, note } = req.body;
+    const userName = (req as any).user.name || 'Colaborador';
+
+    const validStatuses = ['NUEVO', 'CONTACTADO', 'REUNIÓN AGENDADA', 'PROPUESTA ENVIADA', 'GANADO', 'PERDIDO'];
+    if (status && !validStatuses.includes(status)) {
+      return res.status(400).json({ error: 'Estado no válido' });
     }
+
+    const existingLead = await prisma.lead.findUnique({
+      where: { id: leadId }
+    });
+
+    if (!existingLead) {
+      return res.status(404).json({ error: 'Lead no encontrado' });
+    }
+
+    const oldStatus = existingLead.status;
+    const updatedLead = await prisma.lead.update({
+      where: { id: leadId },
+      data: {
+        ...(status ? { status } : {})
+      }
+    });
+
+    // Registrar actividad si hubo cambio de estado o nota
+    if (status && status !== oldStatus) {
+      await prisma.activity.create({
+        data: {
+          leadId,
+          type: 'STATUS_CHANGE',
+          title: `Estado cambiado a ${status}`,
+          description: note || `Cambiado de ${oldStatus} a ${status} por ${userName}`,
+          metadata: { oldStatus, newStatus: status, changedBy: userName }
+        }
+      });
+    } else if (note) {
+      await prisma.activity.create({
+        data: {
+          leadId,
+          type: 'MANUAL_NOTE',
+          title: 'Nota interna añadida',
+          description: note,
+          metadata: { addedBy: userName }
+        }
+      });
+    }
+
+    res.json(updatedLead);
+  } catch (error: any) {
+    res.status(500).json({ error: 'Error actualizando estado de lead', details: error.message });
+  }
+};
+
+export const getLeadActivities = async (req: Request, res: Response) => {
+  try {
+    const { leadId } = req.params;
 
     const activities = await prisma.activity.findMany({
       where: { leadId },
@@ -54,25 +145,14 @@ export const getLeadActivities = async (req: Request, res: Response) => {
 
 export const createLeadActivity = async (req: Request, res: Response) => {
   try {
-    const userId = (req as any).user.id;
     const { leadId } = req.params;
     const { type, title, description, metadata } = req.body;
-
-    // Verify lead belongs to a project owned by the user
-    const lead = await prisma.lead.findUnique({
-      where: { id: leadId },
-      include: { project: true }
-    });
-
-    if (!lead || lead.project.userId !== userId) {
-      return res.status(404).json({ error: 'Lead not found' });
-    }
 
     const activity = await prisma.activity.create({
       data: {
         leadId,
-        type,
-        title,
+        type: type || 'MANUAL_NOTE',
+        title: title || 'Nota de seguimiento',
         description,
         metadata
       }

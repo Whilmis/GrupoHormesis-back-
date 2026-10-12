@@ -1,6 +1,7 @@
-import nodemailer from 'nodemailer';
+import nodemailer, { Transporter } from 'nodemailer';
 
-let transporter: nodemailer.Transporter;
+let transporter: Transporter;
+
 
 // Configurar el transporte
 const initTransporter = async () => {

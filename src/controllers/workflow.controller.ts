@@ -291,7 +291,7 @@ export const workflowController = {
     }, 10000);
 
     try {
-      const { business_context, services, groqCredentialId } = req.body;
+      const { business_context, services, groqCredentialId, brandVoice } = req.body;
       const userId = (req as any).user.id;
       let apiKeyToUse = process.env.GROQ_API_KEY;
       if (groqCredentialId) {
@@ -311,33 +311,37 @@ export const workflowController = {
       for (const service of services) {
         log(`Generando correo para: ${service}...`);
         
-        const mailtoBody = `Hola equipo de Grupo Hormesis,\n\nMe interesa avanzar con la evaluación de nuestro proyecto de ${service}. \n\nPara darles más contexto técnico y de negocio antes de nuestra Llamada de Descubrimiento, aquí les detallo nuestra situación:\n\n- Breve descripción de nuestro principal cuello de botella o necesidad actual:\n[Por favor, escribe aquí...]\n\n- Nuestro objetivo principal a nivel de negocio con esta implementación:\n[Por favor, escribe aquí...]\n\nPara nuestra reunión inicial (15-30 min), les propongo estas dos opciones de disponibilidad:\n\n- Opción 1: [Día y Hora]\n- Opción 2: [Día y Hora]\n\nQuedo a la espera de su confirmación para agendar la sesión.\n\nSaludos cordiales,\n{{name}}`;
+        const mailtoBody = `Hola equipo de Grupo Hormesis,\n\nMe interesa avanzar con la evaluación de nuestro proyecto de ${service}. \n\nPara darles más contexto técnico y de negocio antes de nuestra Llamada de Descubrimiento, aquí les detallo nuestra situación:\n\n- Breve descripción de nuestro principal cuello de botella o necesidad actual:\n[Por favor, escribe aquí...]\n\n- Nuestro objetivo principal a nivel de negocio con esta implementación:\n[Por favor, escribe aquí...]\n\n(Opcional) Ya he agendado la reunión a través del botón adjunto para la siguiente fecha/hora:\n[Pega aquí la fecha/hora de la reunión]\n\nQuedo a la espera de sus comentarios.\n\nSaludos cordiales,\n[Nombre]`;
 
         const prompt = `
 Eres un Master Copywriter B2B y un Diseñador Experto de Emails en HTML.
-Crea un correo de presentación u oferta ALTAMENTE persuasivo y hermoso para este servicio: "${service}".
+Tu objetivo es crear un "Cold Email" (correo en frío) ALTAMENTE efectivo y hermoso para ofrecer este servicio: "${service}".
 Contexto de la Empresa (Grupo Hormesis): 
 "${business_context}"
+
+REQUISITOS ESTRICTOS DE ESTRATEGIA B2B Y COPYWRITING:
+1. ASUNTO (SUBJECT): Debe ser MUY CORTO (4 a 7 palabras máximo), intrigante y casi informal. Evita sonar como un boletín comercial. (Ej: "Idea rápida para tu web", "Pregunta sobre tu arquitectura").
+2. EL GANCHO (HOOK): No te presentes con "Hola, somos la agencia X". Inicia aportando valor directo, explicando que tras auditar su sitio web actual, prepararon una línea de diseño conceptual y detectaron problemas técnicos habituales que frenan sus conversiones.
+3. ACLARACIÓN IMPORTANTE: Deja claro que la muestra visual generada NO es un producto final cerrado ni una plantilla rígida, sino una *dirección de diseño y punto de partida* que se adapta totalmente a su marca.
+4. PROBLEMAS TÉCNICOS Y SOLUCIONES DE VALOR: Menciona 2-3 problemas técnicos comunes que suelen sufrir los negocios de su sector (ej: si es gastronomía, sistemas de reservas propios sin comisiones o automatización de reseñas con IA; si es inmobiliaria, cualificación automática y velocidad de catálogo; si es clínica, recordatorios de citas automáticos y chatbots 24/7).
+5. LONGITUD: El texto debe ser ágil, conciso y profesional (menos de 150 palabras).
+6. CTA (Call To Action): Si les interesa resolver cualquiera de estos puntos técnicos o explorar esa línea de diseño, invítalos a pulsar el botón para agendar un Meet de 15 minutos o responder directamente a este correo.
+
 REQUISITOS ESTRICTOS DE DISEÑO Y ESTRUCTURA (HTML):
-1. Usa un diseño premium, limpio y corporativo con estilos inline (no uses <style> en el head, ponlos directo en las etiquetas).
+1. Usa un diseño premium, limpio y corporativo con estilos inline.
 2. OBLIGATORIO usar la línea de color de la marca: 
-   - Azul Pizarra oscuro (#0f172a) para encabezados, fondos de header o textos principales.
-   - Verde Esmeralda (#10b981) para botones de Call To Action, acentos, o divisores.
-3. ESTRUCTURA DE MARKETING Y CONFIANZA (OBLIGATORIO): El correo debe ser extenso, robusto y persuasivo. Debe incluir:
-   - Un gancho inicial (Hook) que conecte con los puntos de dolor típicos de ${service}.
-   - Beneficios clave y propuesta de valor (Usa viñetas/bullet points con iconos de check ✅).
-   - Elementos de Seguridad/Confianza: Menciona métricas de éxito (ej. "ROI garantizado", "arquitecturas seguras", "tiempos de entrega acelerados") o una pequeña frase de garantía de calidad.
-   - Un diseño visual que divida estas secciones limpiamente (usa fondos claros para contraste).
-4. El diseño debe incluir: Un encabezado (header), el cuerpo robusto con buen padding, y un pie de página profesional.
-4. BOTÓN DE AUTO-RESPUESTA Y CONTEXTO (CRÍTICO): Crea UN ÚNICO botón grande y vistoso (fondo Verde Esmeralda #10b981, texto blanco, esquinas redondeadas) que sea un enlace 'mailto:'.
-   - href="mailto:ventas@grupohormesis.com?subject=Propuesta%20de%20Llamada%20de%20Descubrimiento%20-%20${encodeURIComponent(service)}&body=${encodeURIComponent(mailtoBody)}"
-   - El texto del botón debe decir EXACTAMENTE: "Responder y Agendar Llamada".
-5. IMPORTANTE: NO incluyas múltiples botones. Usa ÚNICAMENTE este botón de respuesta.
-6. El correo debe sentirse humano, aportando valor de inmediato, identificando puntos de dolor relacionados con ${service} y ofreciendo a Grupo Hormesis como la solución. Usa {{name}} para referirte al cliente. No uses 'lorem ipsum', redacta texto persuasivo real y profesional.
-Devuelve EXACTAMENTE Y SOLAMENTE un JSON válido con esta estructura (sin bloques markdown \`\`\`json, solo las llaves):
+   - Azul Pizarra oscuro (#0f172a) para encabezados o textos principales.
+   - Verde Esmeralda (#10b981) para botones o acentos.
+3. NO incluyas miniaturas de video ni menciones la palabra video. Céntrate en la auditoría técnica, la línea de diseño conceptual y las soluciones de negocio.
+
+4. NO INCLUYAS BOTONES NI PIES DE PÁGINA (CRÍTICO): La plantilla maestra del sistema se encarga de inyectar automáticamente la cabecera corporativa, el GIF animado interactivo, la auditoría y los botones finales de 'Agendar Reunión' y 'Responder'. Genera únicamente el texto persuasivo editorial y las viñetas de valor.
+5. CRÍTICO PARA EL CÓDIGO HTML: Debes usar ÚNICAMENTE comillas simples (') para todos los atributos dentro de tus etiquetas HTML. NO uses comillas dobles internas porque romperán el JSON.
+6. Usa [Nombre] para referirte al cliente. EVITA usar llaves { } en el texto para no romper el formato JSON.
+
+Devuelve EXACTAMENTE Y SOLAMENTE un JSON válido con esta estructura (sin bloques markdown, solo llaves):
 {
-  "subject": "Asunto magnético y profesional",
-  "body": "<div style='...'>Todo el código HTML aquí...</div>"
+  "subject": "Asunto magnético de 4-7 palabras",
+  "body": "<p style='font-size: 15px; color: #334155; margin-bottom: 12px;'>Gancho inicial...</p><ul style='color: #475569;'><li>...</li></ul>"
 }
 `;
         let success = false;
@@ -354,13 +358,13 @@ Devuelve EXACTAMENTE Y SOLAMENTE un JSON válido con esta estructura (sin bloque
                 'Content-Type': 'application/json'
               },
               body: JSON.stringify({
-                model: 'openai/gpt-oss-20b',
+                model: 'openai/gpt-oss-120b',
                 messages: [
-                  { role: 'system', content: 'You are an elite HTML Email Designer and Copywriter that only responds in JSON.' },
+                  { role: 'system', content: 'You are an elite HTML Email Designer and Copywriter that only responds in valid JSON. You must use single quotes for all HTML attributes to prevent JSON escaping errors. Do not use markdown blocks, just output the raw JSON.' },
                   { role: 'user', content: prompt }
                 ],
                 temperature: 0.6,
-                max_tokens: 2500
+                max_tokens: 4000
               })
             });
 
@@ -374,8 +378,8 @@ Devuelve EXACTAMENTE Y SOLAMENTE un JSON válido con esta estructura (sin bloque
                   generatedResponses[service] = JSON.parse(match[0]);
                   log(`✅ ¡Éxito con ${service}!`);
                   success = true;
-                } catch (parseError) {
-                  err(`❌ Intento ${attempts}: Error parseando JSON para ${service}`);
+                } catch (parseError: any) {
+                  err(`❌ Intento ${attempts}: Error parseando JSON para ${service}. RAW TEXT: ${rawText}. ParseError: ${parseError.message}`);
                 }
               } else {
                 err(`❌ Intento ${attempts}: La IA no devolvió JSON para ${service}`);
@@ -465,6 +469,7 @@ Reglas:
 1. Aplica la peticion del usuario a las plantillas proporcionadas.
 2. Manten el formato HTML limpio sin etiquetas html/head/body. Usa estilos inline.
 3. Devuelve EXACTAMENTE un JSON valido (sin formato Markdown, sin texto antes ni despues) con la misma estructura (un objeto por cada servicio).
+4. CRÍTICO PARA EL CÓDIGO HTML: Debes usar ÚNICAMENTE comillas simples (') para todos los atributos dentro de tus etiquetas HTML. NO uses comillas dobles internas porque romperán el JSON.
 `;
       const aiResponse = await fetch('https://api.groq.com/openai/v1/chat/completions', {
         method: 'POST',
@@ -473,12 +478,13 @@ Reglas:
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({
-          model: 'openai/gpt-oss-20b',
+          model: 'openai/gpt-oss-120b',
           messages: [
-            { role: 'system', content: 'You are a helpful JSON-only assistant.' },
+            { role: 'system', content: 'You are a helpful JSON-only assistant. You must use single quotes for all HTML attributes to prevent JSON escaping errors. Do not use markdown blocks, just output the raw JSON.' },
             { role: 'user', content: aiPrompt }
           ],
           temperature: 0.5,
+          max_tokens: 4000
         })
       });
       if (!aiResponse.ok) {
@@ -487,8 +493,19 @@ Reglas:
       }
       const aiData = await aiResponse.json();
       let rawText = aiData.choices[0].message.content;
-      rawText = rawText.replace(/```json/g, '').replace(/```/g, '').trim();
-      const newTemplates = JSON.parse(rawText);
+      const match = rawText.match(/\{[\s\S]*\}/);
+      rawText = match ? match[0] : rawText.replace(/```json/g, '').replace(/```/g, '').trim();
+      
+      let newTemplates;
+      try {
+        newTemplates = JSON.parse(rawText);
+      } catch (parseError: any) {
+        console.error("❌ RAW TEXT GROQ REFINE:", rawText);
+        return res.status(500).json({ 
+          error: 'Error de parseo JSON desde Groq.', 
+          details: rawText 
+        });
+      }
       // Si fue un solo servicio, mergear con los existentes. Si fueron todos, reemplazar.
       if (service) {
         currentConfig.generated_responses[service] = newTemplates[service];

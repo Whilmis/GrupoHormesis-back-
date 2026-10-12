@@ -31,6 +31,7 @@ export const submitForm = async (req: Request, res: Response, next: NextFunction
     const nameKey = config?.fieldMappings?.nameField || 'name';
 
     let referredByUserId = null;
+    let referredByName = null;
 
     let couponCodeToSearch = null;
 
@@ -56,6 +57,7 @@ export const submitForm = async (req: Request, res: Response, next: NextFunction
       if (referrer) {
         logToFile('[FormSubmit] Referrer encontrado: ' + referrer.name);
         referredByUserId = referrer.id;
+          referredByName = referrer.name;
       } else {
         logToFile('[FormSubmit] No se encontró el referrer para el código: ' + normalizedCode);
       }
@@ -84,7 +86,8 @@ export const submitForm = async (req: Request, res: Response, next: NextFunction
           phone: req.body.phone || req.body.telefono || null,
           website: req.body.website || null,
           source: 'Formulario Web',
-          status: 'NUEVO'
+          status: 'NUEVO',
+          metadata: { coupon: req.body.coupon || req.body.referralCode || req.body.couponCode, referredByUserId, referredByName }
         }
       });
       // Inject leadId so ExecutionEngine can log activities
@@ -101,5 +104,36 @@ export const submitForm = async (req: Request, res: Response, next: NextFunction
     });
   } catch (error) {
     next(error);
+  }
+};
+
+
+export const getFormSubmissions = async (req: Request, res: Response) => {
+  try {
+    const submissions = await prisma.formSubmission.findMany({
+      include: {
+        workflow: {
+          select: {
+            id: true,
+            name: true,
+            project: {
+              select: { id: true, name: true }
+            }
+          }
+        },
+        referredBy: {
+          select: {
+            id: true,
+            name: true,
+            email: true
+          }
+        }
+      },
+      orderBy: { createdAt: 'desc' }
+    });
+
+    res.json(submissions);
+  } catch (error: any) {
+    res.status(500).json({ error: 'Error fetching form submissions', details: error.message });
   }
 };
