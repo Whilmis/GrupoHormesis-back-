@@ -1,10 +1,9 @@
 import { Router } from 'express';
 import { getLeadActivities, createLeadActivity, getColaboradorLeads, updateLeadStatus } from '../controllers/lead.controller';
 import { requireAuth } from '../middlewares/auth.middleware';
-import { PrismaClient } from '@prisma/client';
+import prisma from '../config/db';
 import { extractBrandAssets, generateConceptualDesignHtml, sanitizeAndGuardMockupHtml } from '../services/execution.engine';
 
-const prisma = new PrismaClient();
 const router = Router();
 
 // RUTA PÚBLICA PARA VER MAQUETA EN PANTALLA COMPLETA (CERO 404s)

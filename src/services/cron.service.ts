@@ -1,23 +1,37 @@
-import cron from 'node-cron';
-import { PrismaClient } from '@prisma/client';
+import cron, { ScheduledTask } from 'node-cron';
+import prisma from '../config/db';
 import { ExecutionEngine } from './execution.engine';
 
-const prisma = new PrismaClient();
-const scheduledJobs = new Map<string, cron.ScheduledTask>();
+const scheduledJobs = new Map<string, ScheduledTask>();
 
 export class CronService {
-  static async init() {
+  static async init(retries = 5, delayMs = 3000) {
     console.log('[CronService] Inicializando scheduler...');
     
-    // Buscar workflows activos que tengan un schedule configurado
-    const workflows = await prisma.userWorkflow.findMany({
-      where: { isActive: true }
-    });
+    for (let attempt = 1; attempt <= retries; attempt++) {
+      try {
+        // Buscar workflows activos que tengan un schedule configurado
+        const workflows = await prisma.userWorkflow.findMany({
+          where: { isActive: true }
+        });
 
-    for (const wf of workflows) {
-      const config = wf.config as any;
-      if (config && config.schedule) {
-        this.scheduleWorkflow(wf.id, config.schedule);
+        for (const wf of workflows) {
+          const config = wf.config as any;
+          if (config && config.schedule) {
+            this.scheduleWorkflow(wf.id, config.schedule);
+          }
+        }
+
+        console.log(`[CronService] Scheduler inicializado correctamente (${workflows.length} workflows activos)`);
+        return;
+      } catch (error: any) {
+        console.warn(`[CronService] Intento ${attempt}/${retries} al conectar con la base de datos: ${error.message || error}`);
+        if (attempt < retries) {
+          console.log(`[CronService] Reintentando en ${delayMs / 1000}s...`);
+          await new Promise(resolve => setTimeout(resolve, delayMs));
+        } else {
+          console.error('[CronService] No se pudo inicializar el scheduler tras varios intentos. El servidor continúa activo.');
+        }
       }
     }
   }

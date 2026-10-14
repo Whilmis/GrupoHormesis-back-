@@ -1,11 +1,10 @@
 import { CrawlerService } from './crawler.service';
-import { PrismaClient, Prisma, UserWorkflow, Credential } from '@prisma/client';
+import { Prisma, UserWorkflow, Credential } from '@prisma/client';
 import { CredentialService } from './credential.service';
 import nodemailer from 'nodemailer';
 import { v2 as cloudinary } from 'cloudinary';
 import jwt from 'jsonwebtoken';
-
-const prisma = new PrismaClient();
+import prisma from '../config/db';
 
 async function generateMagicLink(leadId: string, calendarId: string): Promise<string | null> {
   const lead = await prisma.lead.findUnique({
@@ -26,7 +25,195 @@ async function generateMagicLink(leadId: string, calendarId: string): Promise<st
   return null;
 }
 
-async function generateComparisonGif(beforeUrl: string, afterUrl: string, title: string): Promise<string | null> {
+export async function captureMockupScreenshot(mockupHtml: string, leadId: string): Promise<string> {
+  const { default: puppeteer } = await import('puppeteer');
+  const browser = await puppeteer.launch({
+    headless: true,
+    args: ['--no-sandbox', '--disable-setuid-sandbox']
+  });
+
+  try {
+    const page = await browser.newPage();
+    await page.setViewport({ width: 1280, height: 800 });
+    await page.setContent(mockupHtml, { waitUntil: 'domcontentloaded', timeout: 15000 });
+    await new Promise(r => setTimeout(r, 600)); // permitir fuentes web y estilos
+    const screenshotBuffer = await page.screenshot({ type: 'jpeg', quality: 85 }) as Buffer;
+
+    cloudinary.config({
+      cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+      api_key: process.env.CLOUDINARY_API_KEY,
+      api_secret: process.env.CLOUDINARY_API_SECRET,
+      secure: true
+    });
+
+    const uploadUrl = await new Promise<string>((resolve, reject) => {
+      const uploadStream = cloudinary.uploader.upload_stream(
+        { folder: 'hormesis_mockups', public_id: `propuesta_${leadId}_${Date.now()}` },
+        (error, result) => {
+          if (error || !result) return reject(error || new Error('Error subiendo captura de propuesta a Cloudinary'));
+          resolve(result.secure_url || result.url);
+        }
+      );
+      uploadStream.end(screenshotBuffer);
+    });
+
+    return uploadUrl;
+  } finally {
+    await browser.close();
+  }
+}
+
+function getComparisonFrameHtml(type: 'before' | 'after', imageSrc: string, businessName: string, websiteUrl: string) {
+  let cleanDomain = (websiteUrl || '')
+    .replace(/^https?:\/\//i, '')
+    .replace(/^www\./i, '')
+    .split('/')[0] || (businessName ? `${businessName.toLowerCase().replace(/[^a-z0-9]/g, '')}.com` : 'tu-sitio.com');
+
+  const isBefore = type === 'before';
+  const badgeText = isBefore ? '🔴 SITIO WEB ACTUAL' : '🟢 PROPUESTA REDISEÑO · GRUPO HORMESIS';
+  const badgeStyle = isBefore
+    ? 'background: rgba(239, 68, 68, 0.18); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.4);'
+    : 'background: rgba(16, 185, 129, 0.2); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.5); box-shadow: 0 0 15px rgba(16, 185, 129, 0.25);';
+
+  const footerText = isBefore
+    ? '⚠️ Diagnóstico Digital: Fricciones de conversión y diseño anticuado'
+    : '✨ Propuesta Conceptual: 100% Responsive, Alta Velocidad y Foco en Ventas';
+  const footerStyle = isBefore
+    ? 'background: rgba(15, 23, 42, 0.92); color: #94a3b8; border-top: 1px solid rgba(239, 68, 68, 0.3);'
+    : 'background: rgba(15, 23, 42, 0.92); color: #e2e8f0; border-top: 1px solid rgba(16, 185, 129, 0.35);';
+
+  return `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      width: 1000px;
+      height: 640px;
+      background: radial-gradient(circle at 50% 20%, #1e293b 0%, #090d16 100%);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+    }
+    .mockup-window {
+      width: 920px;
+      height: 570px;
+      background: #0f172a;
+      border-radius: 12px;
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.8), 0 0 0 1px rgba(255, 255, 255, 0.05);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    .title-bar {
+      height: 44px;
+      background: #111827;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+      display: flex;
+      align-items: center;
+      padding: 0 16px;
+      justify-content: space-between;
+    }
+    .traffic-lights {
+      display: flex;
+      gap: 7px;
+      align-items: center;
+    }
+    .dot {
+      width: 11px;
+      height: 11px;
+      border-radius: 50%;
+    }
+    .dot-red { background: #ef4444; }
+    .dot-yellow { background: #f59e0b; }
+    .dot-green { background: #10b981; }
+    
+    .url-bar {
+      background: #1f2937;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 20px;
+      padding: 4px 14px;
+      font-size: 11px;
+      color: #9ca3af;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      max-width: 380px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .badge {
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.5px;
+      padding: 4px 12px;
+      border-radius: 20px;
+      ${badgeStyle}
+    }
+    .viewport {
+      flex: 1;
+      position: relative;
+      background: #020617;
+      overflow: hidden;
+      display: flex;
+    }
+    .viewport-img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      object-position: top;
+      display: block;
+    }
+    .footer-pill {
+      position: absolute;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      padding: 8px 16px;
+      font-size: 12px;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      backdrop-filter: blur(8px);
+      ${footerStyle}
+    }
+  </style>
+</head>
+<body>
+  <div class="mockup-window">
+    <div class="title-bar">
+      <div class="traffic-lights">
+        <div class="dot dot-red"></div>
+        <div class="dot dot-yellow"></div>
+        <div class="dot dot-green"></div>
+      </div>
+      <div class="url-bar">
+        <span>🔒</span>
+        <span>https://${cleanDomain}</span>
+      </div>
+      <div class="badge">${badgeText}</div>
+    </div>
+    <div class="viewport">
+      <img src="${imageSrc}" class="viewport-img" />
+      <div class="footer-pill">${footerText}</div>
+    </div>
+  </div>
+</body>
+</html>`;
+}
+
+async function generateComparisonGif(
+  beforeUrl: string, 
+  afterUrl: string, 
+  businessName: string, 
+  websiteUrl: string = ''
+): Promise<string | null> {
   try {
     cloudinary.config({
       cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
@@ -38,19 +225,82 @@ async function generateComparisonGif(beforeUrl: string, afterUrl: string, title:
     if (!beforeUrl) return afterUrl || null;
     if (!afterUrl) return beforeUrl || null;
 
-    if (process.env.CLOUDINARY_CLOUD_NAME && process.env.CLOUDINARY_API_KEY && process.env.CLOUDINARY_API_SECRET) {
-      const tag = `comp_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
-      await cloudinary.uploader.upload(beforeUrl, { tags: [tag] });
-      await cloudinary.uploader.upload(afterUrl, { tags: [tag] });
-      
+    if (!process.env.CLOUDINARY_CLOUD_NAME || !process.env.CLOUDINARY_API_KEY || !process.env.CLOUDINARY_API_SECRET) {
+      return beforeUrl;
+    }
+
+    const tag = `comp_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
+
+    // 1. Intentar composición premium enmarcada con Puppeteer (diseño macOS de alta conversión)
+    try {
+      const [beforeRes, afterRes] = await Promise.all([
+        fetch(beforeUrl),
+        fetch(afterUrl)
+      ]);
+      const [beforeBuf, afterBuf] = await Promise.all([
+        beforeRes.arrayBuffer().then(b => Buffer.from(b)),
+        afterRes.arrayBuffer().then(b => Buffer.from(b))
+      ]);
+      const beforeDataUri = `data:image/jpeg;base64,${beforeBuf.toString('base64')}`;
+      const afterDataUri = `data:image/jpeg;base64,${afterBuf.toString('base64')}`;
+
+      const { default: puppeteer } = await import('puppeteer');
+      const browser = await puppeteer.launch({
+        headless: true,
+        args: ['--no-sandbox', '--disable-setuid-sandbox']
+      });
+
+      try {
+        const page = await browser.newPage();
+        await page.setViewport({ width: 1000, height: 640, deviceScaleFactor: 1 });
+
+        // Render Frame 1 (Antes)
+        await page.setContent(getComparisonFrameHtml('before', beforeDataUri, businessName, websiteUrl), { waitUntil: 'load' });
+        const frame1Buffer = await page.screenshot({ type: 'jpeg', quality: 90 }) as Buffer;
+
+        // Render Frame 2 (Después / Propuesta)
+        await page.setContent(getComparisonFrameHtml('after', afterDataUri, businessName, websiteUrl), { waitUntil: 'load' });
+        const frame2Buffer = await page.screenshot({ type: 'jpeg', quality: 90 }) as Buffer;
+
+        // Subir frames con orden alfabético estricto (01_before, 02_after)
+        await Promise.all([
+          new Promise((resolve, reject) => {
+            const stream = cloudinary.uploader.upload_stream(
+              { tags: [tag], public_id: `${tag}_01_before` },
+              (err, res) => err ? reject(err) : resolve(res)
+            );
+            stream.end(frame1Buffer);
+          }),
+          new Promise((resolve, reject) => {
+            const stream = cloudinary.uploader.upload_stream(
+              { tags: [tag], public_id: `${tag}_02_after` },
+              (err, res) => err ? reject(err) : resolve(res)
+            );
+            stream.end(frame2Buffer);
+          })
+        ]);
+
+        const multiResult = await (cloudinary.uploader as any).multi(tag, {
+          delay: 2000, // 2 segundos para apreciar claramente cada estado
+          format: 'gif'
+        });
+
+        return multiResult.secure_url || multiResult.url || null;
+      } finally {
+        await browser.close();
+      }
+    } catch (composeErr: any) {
+      console.warn('[ExecutionEngine] Fallback a GIF directo por error en composición:', composeErr.message);
+      // Fallback a subida directa garantizando orden alfabético
+      await cloudinary.uploader.upload(beforeUrl, { tags: [tag], public_id: `${tag}_01_before` });
+      await cloudinary.uploader.upload(afterUrl, { tags: [tag], public_id: `${tag}_02_after` });
+
       const multiResult = await (cloudinary.uploader as any).multi(tag, {
-        delay: 1500,
+        delay: 1800,
         format: 'gif'
       });
       return multiResult.secure_url || multiResult.url || null;
     }
-
-    return beforeUrl;
   } catch (err: any) {
     console.warn('[ExecutionEngine] Error generando GIF de comparación:', err.message);
     return null;
@@ -363,22 +613,41 @@ class AutoOutreachGoogleMapsWorkflow extends BaseWorkflowType {
       // Enlace para ver la maqueta en pantalla completa
       const fullScreenMockupUrl = `${backendUrl}/api/leads/public/${lead.id}/mockup`;
 
-      // 7. Generar GIF Animado Antes vs Después para este lead (Regenerar si contenía el flag roto fl_multi)
-      let gifUrl = meta?.comparisonGifUrl;
-      const isInvalidGif = !gifUrl || gifUrl.includes('fl_multi') || !gifUrl.includes('/multi/');
-      if (isInvalidGif) {
-        context.log(`Generando GIF animado Antes vs Después para ${lead.businessName}...`);
-        const afterImg = mockupHeroImage || meta?.mockupHeroImage || 'https://images.unsplash.com/photo-1600585154340-be6161a56a0c?auto=format&fit=crop&w=1200&q=80';
+      // 7. Generar GIF Animado Antes vs Después para este lead (Composición enmarcada con Captura Real de la Propuesta)
+      let proposalScreenshotUrl = meta?.mockupScreenshotUrl || meta?.creativeAssets?.mockup?.previewImageUrl;
+      if (!proposalScreenshotUrl && mockupHtml) {
         try {
-          const freshGif = await generateComparisonGif(beforeScreenshot, afterImg, lead.businessName || 'Tu Negocio');
-          if (freshGif && freshGif.includes('/multi/')) {
-            gifUrl = freshGif;
-            meta.comparisonGifUrl = gifUrl;
+          context.log(`📸 Capturando pantalla real de la propuesta para ${lead.businessName}...`);
+          proposalScreenshotUrl = await captureMockupScreenshot(mockupHtml, lead.id);
+          if (proposalScreenshotUrl) {
+            meta.mockupScreenshotUrl = proposalScreenshotUrl;
             await prisma.lead.update({
               where: { id: lead.id },
               data: { metadata: meta }
             });
-            context.log(`✅ GIF animado creado exitosamente: ${gifUrl}`);
+            context.log(`✅ Captura de propuesta guardada: ${proposalScreenshotUrl}`);
+          }
+        } catch (capErr: any) {
+          context.log(`Aviso capturando maqueta: ${capErr.message}`);
+        }
+      }
+
+      let gifUrl = meta?.comparisonGifUrl;
+      const isInvalidGif = !gifUrl || gifUrl.includes('fl_multi') || !gifUrl.includes('/multi/') || !meta?.hasFramedGif;
+      if (isInvalidGif) {
+        context.log(`Generando GIF animado Antes vs Después (Composición Premium) para ${lead.businessName}...`);
+        const afterImg = proposalScreenshotUrl || mockupHeroImage || meta?.mockupHeroImage || 'https://images.unsplash.com/photo-1600585154340-be6161a56a0c?auto=format&fit=crop&w=1200&q=80';
+        try {
+          const freshGif = await generateComparisonGif(beforeScreenshot, afterImg, lead.businessName || 'Tu Negocio', lead.website || '');
+          if (freshGif && freshGif.includes('/multi/')) {
+            gifUrl = freshGif;
+            meta.comparisonGifUrl = gifUrl;
+            meta.hasFramedGif = true;
+            await prisma.lead.update({
+              where: { id: lead.id },
+              data: { metadata: meta }
+            });
+            context.log(`✅ GIF animado con marco y propuesta real creado exitosamente: ${gifUrl}`);
           }
         } catch (gifErr: any) {
           context.log(`Aviso: No se pudo generar GIF animado: ${gifErr.message}`);
@@ -2494,6 +2763,14 @@ FORMATO:
       // Aplicar guardrails maestros de maquetación y protección de activos
       generatedHtml = sanitizeAndGuardMockupHtml(generatedHtml, leadName, brandPalette, catImages, fallbackCat, websiteUrl);
 
+      let mockupScreenshotUrl = '';
+      try {
+        context.log(`📸 Generando captura visual de la propuesta Google AI para ${leadName}...`);
+        mockupScreenshotUrl = await captureMockupScreenshot(generatedHtml, lead.id);
+      } catch (capErr: any) {
+        context.log(`Aviso generando captura de maqueta: ${capErr.message}`);
+      }
+
       const mockupData = {
         generatedAt: new Date().toISOString(),
         designStyle,
@@ -2510,7 +2787,7 @@ FORMATO:
           logo: catImages.logo,
           hero: catImages.hero
         },
-        previewImageUrl: (techAnalysis.screenshots && techAnalysis.screenshots[0]?.url) || null,
+        previewImageUrl: mockupScreenshotUrl || (techAnalysis.screenshots && techAnalysis.screenshots[0]?.url) || null,
         features: [
           `Identidad cromática extraída de su web original (${brandPalette.primary} / ${brandPalette.accent})`,
           catImages.logo ? 'Logotipo oficial de la empresa integrado' : 'Insignia tipográfica corporativa estilizada',
@@ -2524,6 +2801,7 @@ FORMATO:
       const updatedMetadata = {
         ...meta,
         mockupHeroImage: catImages.hero,
+        mockupScreenshotUrl: mockupScreenshotUrl || null,
         generatedMockup: generatedHtml,
         creativeAssets: {
           ...(meta.creativeAssets || {}),

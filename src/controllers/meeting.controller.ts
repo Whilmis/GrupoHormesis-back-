@@ -1,7 +1,7 @@
 import { Request, Response } from 'express';
-import { PrismaClient } from '@prisma/client';
+import prisma from '../config/db';
 
-const prisma = new PrismaClient();
+
 
 // Actualizar reunión (Drag & Drop)
 export const rescheduleMeeting = async (req: Request, res: Response) => {

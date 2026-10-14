@@ -1,9 +1,9 @@
 import { Request, Response } from 'express';
-import { PrismaClient } from '@prisma/client';
+import prisma from '../config/db';
 import { CredentialService } from '../services/credential.service';
 import { ExecutionEngine } from '../services/execution.engine';
 
-const prisma = new PrismaClient();
+
 
 export const workflowController = {
   // --- TEMPLATES ---
