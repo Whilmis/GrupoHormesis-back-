@@ -9,6 +9,7 @@ import projectRoutes from './routes/project.routes';
 import leadRoutes from './routes/lead.routes';
 import calendarRoutes from './routes/calendar.routes';
 import meetingRoutes from './routes/meeting.routes';
+import prisma from './config/db';
 import { errorHandler } from './middlewares/error.middleware';
 
 dotenv.config();
@@ -42,7 +43,6 @@ app.use(express.json());
 // Health check
 app.get('/api/health', async (req, res) => {
   try {
-    const { default: prisma } = await import('./config/db');
     const execCount = await prisma.workflowExecution.count();
     res.json({
       status: 'ok',
