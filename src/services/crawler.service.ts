@@ -510,6 +510,7 @@ Devuelve tu análisis OBLIGATORIAMENTE en formato JSON estricto con esta estruct
     return {
       url,
       htmlSourceUrl,
+      htmlContent,
       screenshots,
       aiAuditReport,
       brandIdentity

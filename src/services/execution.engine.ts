@@ -1,4 +1,5 @@
 import { CrawlerService } from './crawler.service';
+import { EmailValidatorService } from './email-validator.service';
 import { Prisma, UserWorkflow, Credential } from '@prisma/client';
 import { CredentialService } from './credential.service';
 import nodemailer from 'nodemailer';
@@ -394,11 +395,11 @@ class LeadCollectorWorkflow extends BaseWorkflowType {
             lead.phone = detailsData.result.formatted_phone_number || 'No disponible';
             lead.website = detailsData.result.website || 'No disponible';
 
-            // Scrapear email del sitio web si existe
+            // Scrapear y validar email real del sitio web si existe (descartando servidores caídos o aparcados)
             if (lead.website && lead.website !== 'No disponible') {
               try {
                 const controller = new AbortController();
-                const timeoutId = setTimeout(() => controller.abort(), 4000);
+                const timeoutId = setTimeout(() => controller.abort(), 6000);
                 const siteRes = await fetch(lead.website, {
                   signal: controller.signal,
                   headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' }
@@ -407,19 +408,9 @@ class LeadCollectorWorkflow extends BaseWorkflowType {
 
                 if (siteRes.ok) {
                   const html = await siteRes.text();
-                  const mailtoMatch = html.match(/href=["']mailto:([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})["']/i);
-                  if (mailtoMatch && mailtoMatch[1]) {
-                    lead.email = mailtoMatch[1].toLowerCase();
-                  } else {
-                    const emailRegex = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g;
-                    const matches = html.match(emailRegex);
-                    if (matches) {
-                      const validEmails = matches.filter((e: string) => {
-                        const low = e.toLowerCase();
-                        return !low.endsWith('.png') && !low.endsWith('.jpg') && !low.endsWith('.webp') && !low.includes('sentry') && !low.includes('example.com');
-                      });
-                      if (validEmails.length > 0) lead.email = validEmails[0].toLowerCase();
-                    }
+                  const verifiedEmail = await EmailValidatorService.extractBestEmailFromHtml(html, lead.website);
+                  if (verifiedEmail) {
+                    lead.email = verifiedEmail;
                   }
                 }
               } catch (e) {}
@@ -456,6 +447,16 @@ class LeadCollectorWorkflow extends BaseWorkflowType {
           brandIdentity: crawlerData.brandIdentity,
           aiAuditReport: crawlerData.aiAuditReport
         };
+
+        // Si el scraping rápido no encontró email pero Puppeteer renderizó la web completa, extraerlo ahora
+        if ((!l.email || l.email === 'No disponible') && crawlerData?.htmlContent) {
+          const emailFromPuppeteer = await EmailValidatorService.extractBestEmailFromHtml(crawlerData.htmlContent, l.website);
+          if (emailFromPuppeteer) {
+            l.email = emailFromPuppeteer;
+            context.log(`📧 Correo corporativo real extraído vía Puppeteer para ${l.name}: ${l.email}`);
+          }
+        }
+
         auditedCount++;
         context.log(`✅ Auditoría completada para ${l.name}`);
       } catch (auditErr: any) {
@@ -572,6 +573,23 @@ class AutoOutreachGoogleMapsWorkflow extends BaseWorkflowType {
     const backendUrl = process.env.BACKEND_URL || 'http://localhost:3000';
 
     for (const lead of leads) {
+      // 5.1 Pre-flight: Validación profunda de entregabilidad y estado real del servidor de correo
+      const emailValidation = await EmailValidatorService.validateEmail(lead.email as string, lead.website || undefined);
+      if (!emailValidation.isValid) {
+        context.log(`⚠️ Descartando envío a ${lead.email} (${lead.businessName || 'Empresa'}): ${emailValidation.reason}. Marcando como CORREO_INVALIDO para evitar rebotes.`);
+        await prisma.lead.update({
+          where: { id: lead.id },
+          data: {
+            status: 'CORREO_INVALIDO',
+            metadata: {
+              ...(typeof lead.metadata === 'object' && lead.metadata ? lead.metadata : {}),
+              emailValidationError: emailValidation.reason
+            }
+          }
+        });
+        continue;
+      }
+
       context.log(`Procesando envío para: ${lead.email} (${lead.businessName || 'Empresa'})...`);
       
       const meta = typeof lead.metadata === 'string' ? JSON.parse(lead.metadata) : (lead.metadata || {});
@@ -2914,6 +2932,15 @@ class FormContactWorkflow extends BaseWorkflowType {
     }
 
     context.log(`Enviando correo con asunto: ${clientSubject}`);
+
+    // Validar entregabilidad del correo antes de enviar auto-respuesta
+    if (data.email) {
+      const emailValidation = await EmailValidatorService.validateEmail(data.email);
+      if (!emailValidation.isValid) {
+        context.log(`Aviso: Correo de formulario descartado (${data.email}): ${emailValidation.reason}. Omitiendo envío para evitar rebotes.`);
+        return { message: 'Correo de formulario inválido, omitido', reason: emailValidation.reason };
+      }
+    }
 
     // Configurar transporte nodemailer
     const transporter = nodemailer.createTransport({
