@@ -17,9 +17,18 @@ export const submitForm = async (req: Request, res: Response, next: NextFunction
     const formData = req.body;
     
     // Buscar el workflow para extraer sus fieldMappings
-    const workflow = await prisma.userWorkflow.findUnique({
-      where: { id: workflowId }
-    });
+    let workflow = null;
+    if (workflowId && workflowId !== 'submit') {
+      workflow = await prisma.userWorkflow.findUnique({
+        where: { id: workflowId }
+      });
+    }
+
+    if (!workflow) {
+      workflow = await prisma.userWorkflow.findFirst({
+        where: { isActive: true }
+      });
+    }
 
     if (!workflow) {
       return res.status(404).json({ message: 'Workflow no encontrado' });
