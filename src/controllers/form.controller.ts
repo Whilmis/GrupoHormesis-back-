@@ -76,7 +76,7 @@ export const submitForm = async (req: Request, res: Response, next: NextFunction
     
     const newFormSubmission = await prisma.formSubmission.create({
       data: {
-        workflowId,
+        workflowId: workflow.id,
         name: req.body[nameKey] || null,
         email: req.body[emailKey] || null,
         referredByUserId: referredByUserId,
@@ -103,13 +103,14 @@ export const submitForm = async (req: Request, res: Response, next: NextFunction
       req.body.leadId = newLead.id;
     }
 
-    // Ejecutar el motor de IA con los datos reales del formulario
-    const result = await ExecutionEngine.executeWorkflow(workflowId, req.body);
+    // Ejecutar el motor de IA en segundo plano sin demorar la respuesta al usuario
+    ExecutionEngine.executeWorkflow(workflow.id, req.body).catch((err) => {
+      console.error('[AsyncExecution] Error en ejecución de workflow:', err);
+    });
 
     res.status(201).json({
       message: 'Formulario procesado exitosamente',
-      submission: newFormSubmission,
-      executionResult: result
+      submission: newFormSubmission
     });
   } catch (error) {
     next(error);
