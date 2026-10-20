@@ -38,22 +38,28 @@ export async function captureMockupScreenshot(mockupHtml: string, leadId: string
     const screenshotBuffer = await page.screenshot({ type: 'jpeg', quality: 85 }) as Buffer;
 
     cloudinary.config({
-      cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
-      api_key: process.env.CLOUDINARY_API_KEY,
-      api_secret: process.env.CLOUDINARY_API_SECRET,
+      cloud_name: process.env.CLOUDINARY_CLOUD_NAME || 'dwjkuhxmr',
+      api_key: process.env.CLOUDINARY_API_KEY || '612857339621335',
+      api_secret: process.env.CLOUDINARY_API_SECRET || 'cbNRPlfpLOP2jVcJniKXZq4Xf0k',
       secure: true
     });
 
-    const uploadUrl = await new Promise<string>((resolve, reject) => {
-      const uploadStream = cloudinary.uploader.upload_stream(
-        { folder: 'hormesis_mockups', public_id: `propuesta_${leadId}_${Date.now()}` },
-        (error, result) => {
-          if (error || !result) return reject(error || new Error('Error subiendo captura de propuesta a Cloudinary'));
-          resolve(result.secure_url || result.url);
-        }
-      );
-      uploadStream.end(screenshotBuffer);
-    });
+    let uploadUrl = '';
+    try {
+      uploadUrl = await new Promise<string>((resolve, reject) => {
+        const uploadStream = cloudinary.uploader.upload_stream(
+          { folder: 'hormesis_mockups', public_id: `propuesta_${leadId}_${Date.now()}` },
+          (error, result) => {
+            if (error || !result) return reject(error || new Error('Error subiendo captura de propuesta a Cloudinary'));
+            resolve(result.secure_url || result.url);
+          }
+        );
+        uploadStream.end(screenshotBuffer);
+      });
+    } catch (uploadErr: any) {
+      console.warn(`[ExecutionEngine] Falló subida de mockup a Cloudinary: ${uploadErr.message}. Usando Data URI.`);
+      uploadUrl = `data:image/jpeg;base64,${screenshotBuffer.toString('base64')}`;
+    }
 
     return uploadUrl;
   } finally {
@@ -213,19 +219,19 @@ async function generateComparisonGif(
   websiteUrl: string = ''
 ): Promise<string | null> {
   try {
+    const cloudName = process.env.CLOUDINARY_CLOUD_NAME || 'dwjkuhxmr';
+    const apiKey = process.env.CLOUDINARY_API_KEY || '612857339621335';
+    const apiSecret = process.env.CLOUDINARY_API_SECRET || 'cbNRPlfpLOP2jVcJniKXZq4Xf0k';
+
     cloudinary.config({
-      cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
-      api_key: process.env.CLOUDINARY_API_KEY,
-      api_secret: process.env.CLOUDINARY_API_SECRET,
+      cloud_name: cloudName,
+      api_key: apiKey,
+      api_secret: apiSecret,
       secure: true
     });
 
     if (!beforeUrl) return afterUrl || null;
     if (!afterUrl) return beforeUrl || null;
-
-    if (!process.env.CLOUDINARY_CLOUD_NAME || !process.env.CLOUDINARY_API_KEY || !process.env.CLOUDINARY_API_SECRET) {
-      return beforeUrl;
-    }
 
     const tag = `comp_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
 

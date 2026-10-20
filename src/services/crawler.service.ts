@@ -20,7 +20,7 @@ export class CrawlerService {
       '--disable-gpu',
       '--no-first-run',
       '--no-zygote',
-      '--single-process',
+      '--disable-blink-features=AutomationControlled',
       ...customArgs
     ];
 
@@ -68,11 +68,11 @@ export class CrawlerService {
   static async analyzeWebsiteAndCapture(url: string): Promise<WebsiteAnalysis> {
     console.log(`[CrawlerService] Iniciando análisis para: ${url}`);
     
-    // Configurar Cloudinary
+    // Configurar Cloudinary con fallbacks
     cloudinary.config({ 
-      cloud_name: process.env.CLOUDINARY_CLOUD_NAME, 
-      api_key: process.env.CLOUDINARY_API_KEY, 
-      api_secret: process.env.CLOUDINARY_API_SECRET,
+      cloud_name: process.env.CLOUDINARY_CLOUD_NAME || 'dwjkuhxmr', 
+      api_key: process.env.CLOUDINARY_API_KEY || '612857339621335', 
+      api_secret: process.env.CLOUDINARY_API_SECRET || 'cbNRPlfpLOP2jVcJniKXZq4Xf0k',
       secure: true
     });
     
@@ -83,12 +83,18 @@ export class CrawlerService {
     
     try {
       const page = await browser.newPage();
+      await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36');
       await page.setViewport({ width: 1280, height: 800 });
       
       const startTime = Date.now();
       
-      // Ir a la página y esperar a que cargue la red
-      await page.goto(url, { waitUntil: 'networkidle2', timeout: 30000 });
+      // Ir a la página
+      try {
+        await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 20000 });
+        await new Promise(r => setTimeout(r, 1500));
+      } catch (navErr: any) {
+        console.warn(`[CrawlerService] Aviso navegando a ${url}: ${navErr.message}`);
+      }
       await CrawlerService.dismissCookieBanners(page);
       
       const loadTimeMs = Date.now() - startTime;
@@ -101,31 +107,35 @@ export class CrawlerService {
       });
       
       // 3. Tomar Captura de Pantalla
-      // Lo tomamos como buffer en memoria para no guardarlo en el disco duro del servidor
       const screenshotBuffer = await page.screenshot({ type: 'jpeg', quality: 80 }) as Buffer;
       
       console.log(`[CrawlerService] Captura tomada. Subiendo a Cloudinary...`);
       
-      // 4. Subir a Cloudinary usando un Stream
-      const screenshotUrl = await new Promise<string>((resolve, reject) => {
-        const uploadStream = cloudinary.uploader.upload_stream(
-          { 
-            folder: 'hormesis_leads',
-            // Por ahora guardamos la imagen plana. Las capas (overlays de Play)
-            // las aplicaremos dinámicamente en la URL o en un paso posterior.
-          },
-          (error, result) => {
-            if (error) return reject(error);
-            if (!result) return reject(new Error('Cloudinary no devolvió resultado'));
-            resolve(result.secure_url);
-          }
-        );
-        
-        uploadStream.on('error', (err) => reject(err));
-        uploadStream.end(screenshotBuffer);
-      });
+      // 4. Subir a Cloudinary con fallback a Data URI
+      let screenshotUrl = '';
+      try {
+        screenshotUrl = await new Promise<string>((resolve, reject) => {
+          const uploadStream = cloudinary.uploader.upload_stream(
+            { 
+              folder: 'hormesis_leads',
+              public_id: `lead_${Date.now()}`
+            },
+            (error, result) => {
+              if (error) return reject(error);
+              if (!result || !result.secure_url) return reject(new Error('Cloudinary no devolvió resultado'));
+              resolve(result.secure_url);
+            }
+          );
+          
+          uploadStream.on('error', (err) => reject(err));
+          uploadStream.end(screenshotBuffer);
+        });
+      } catch (uploadErr: any) {
+        console.warn(`[CrawlerService] Falló subida a Cloudinary (${uploadErr.message}). Usando Data URI.`);
+        screenshotUrl = `data:image/jpeg;base64,${screenshotBuffer.toString('base64')}`;
+      }
       
-      console.log(`[CrawlerService] Éxito. Imagen subida a: ${screenshotUrl}`);
+      console.log(`[CrawlerService] Éxito. Imagen lista: ${screenshotUrl.substring(0, 50)}...`);
       
       return {
         url,
@@ -202,25 +212,33 @@ export class CrawlerService {
     console.log(`[CrawlerService] Iniciando auditoría para: ${url}`);
     
     cloudinary.config({ 
-      cloud_name: process.env.CLOUDINARY_CLOUD_NAME, 
-      api_key: process.env.CLOUDINARY_API_KEY, 
-      api_secret: process.env.CLOUDINARY_API_SECRET,
+      cloud_name: process.env.CLOUDINARY_CLOUD_NAME || 'dwjkuhxmr', 
+      api_key: process.env.CLOUDINARY_API_KEY || '612857339621335', 
+      api_secret: process.env.CLOUDINARY_API_SECRET || 'cbNRPlfpLOP2jVcJniKXZq4Xf0k',
       secure: true
     });
 
-    const uploadToCloudinary = async (buffer: Buffer): Promise<string> => {
-      return new Promise<string>((resolve, reject) => {
-        const uploadStream = cloudinary.uploader.upload_stream(
-          { folder: 'hormesis_leads' },
-          (error, result) => {
-            if (error) return reject(error);
-            if (!result) return reject(new Error('Cloudinary no devolvió resultado'));
-            resolve(result.secure_url);
-          }
-        );
-        uploadStream.on('error', (err) => reject(err));
-        uploadStream.end(buffer);
-      });
+    const uploadToCloudinary = async (buffer: Buffer, publicIdPrefix: string = 'screen'): Promise<string> => {
+      try {
+        return await new Promise<string>((resolve, reject) => {
+          const uploadStream = cloudinary.uploader.upload_stream(
+            { 
+              folder: 'hormesis_leads',
+              public_id: `${publicIdPrefix}_${Date.now()}`
+            },
+            (error, result) => {
+              if (error) return reject(error);
+              if (!result || !result.secure_url) return reject(new Error('Cloudinary no devolvió resultado'));
+              resolve(result.secure_url);
+            }
+          );
+          uploadStream.on('error', (err) => reject(err));
+          uploadStream.end(buffer);
+        });
+      } catch (err: any) {
+        console.warn(`[CrawlerService] Falló subida a Cloudinary (${err.message}). Usando fallback Data URI.`);
+        return `data:image/jpeg;base64,${buffer.toString('base64')}`;
+      }
     };
     
     const screenshots: { type: string; url: string }[] = [];
@@ -240,45 +258,87 @@ export class CrawlerService {
     if (browser) {
       try {
         const page = await browser.newPage();
-        
-        // 1. Desktop Hero
+        await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36');
+        await page.setExtraHTTPHeaders({
+          'Accept-Language': 'es-ES,es;q=0.9,en;q=0.8'
+        });
         await page.setViewport({ width: 1280, height: 800 });
-        await page.goto(url, { waitUntil: 'networkidle2', timeout: 30000 });
+        
+        try {
+          await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 20000 });
+          await new Promise(r => setTimeout(r, 1500));
+        } catch (navErr: any) {
+          console.warn(`[CrawlerService] Advertencia navegando a ${url}: ${navErr.message}`);
+        }
+
         await CrawlerService.dismissCookieBanners(page);
-        htmlContent = await page.content();
-        const heroDesktopBuffer = await page.screenshot({ type: 'jpeg', quality: 70 }) as Buffer;
-        screenshots.push({ type: 'desktop_home', url: await uploadToCloudinary(heroDesktopBuffer) });
+
+        try {
+          htmlContent = await page.content();
+        } catch (cErr: any) {
+          console.warn(`[CrawlerService] No se pudo leer page.content(): ${cErr.message}`);
+        }
+
+        // 1. Desktop Hero
+        try {
+          const heroDesktopBuffer = await page.screenshot({ type: 'jpeg', quality: 70 }) as Buffer;
+          const heroUrl = await uploadToCloudinary(heroDesktopBuffer, 'desktop_home');
+          screenshots.push({ type: 'desktop_home', url: heroUrl });
+        } catch (err: any) {
+          console.warn(`[CrawlerService] Error en captura desktop_home: ${err.message}`);
+        }
         
         // 2. Desktop Footer
-        await page.evaluate(() => {
-          window.scrollTo(0, document.body.scrollHeight);
-        });
-        await new Promise(r => setTimeout(r, 1000));
-        await CrawlerService.dismissCookieBanners(page);
-        const footerDesktopBuffer = await page.screenshot({ type: 'jpeg', quality: 70 }) as Buffer;
-        screenshots.push({ type: 'desktop_footer', url: await uploadToCloudinary(footerDesktopBuffer) });
+        try {
+          await page.evaluate(() => {
+            window.scrollTo(0, document.body.scrollHeight);
+          });
+          await new Promise(r => setTimeout(r, 800));
+          await CrawlerService.dismissCookieBanners(page);
+          const footerDesktopBuffer = await page.screenshot({ type: 'jpeg', quality: 70 }) as Buffer;
+          const footerUrl = await uploadToCloudinary(footerDesktopBuffer, 'desktop_footer');
+          screenshots.push({ type: 'desktop_footer', url: footerUrl });
+        } catch (err: any) {
+          console.warn(`[CrawlerService] Error en captura desktop_footer: ${err.message}`);
+        }
         
         // 3. Mobile Hero
-        await page.setViewport({ width: 375, height: 812, isMobile: true });
-        await page.goto(url, { waitUntil: 'networkidle2', timeout: 30000 });
-        await CrawlerService.dismissCookieBanners(page);
-        const heroMobileBuffer = await page.screenshot({ type: 'jpeg', quality: 70 }) as Buffer;
-        screenshots.push({ type: 'mobile_home', url: await uploadToCloudinary(heroMobileBuffer) });
+        try {
+          await page.setViewport({ width: 375, height: 812, isMobile: true });
+          await page.evaluate(() => window.scrollTo(0, 0));
+          await new Promise(r => setTimeout(r, 800));
+          await CrawlerService.dismissCookieBanners(page);
+          const heroMobileBuffer = await page.screenshot({ type: 'jpeg', quality: 70 }) as Buffer;
+          const mobileUrl = await uploadToCloudinary(heroMobileBuffer, 'mobile_home');
+          screenshots.push({ type: 'mobile_home', url: mobileUrl });
+        } catch (err: any) {
+          console.warn(`[CrawlerService] Error en captura mobile_home: ${err.message}`);
+        }
 
         // 4. Services (Mock)
-        await page.setViewport({ width: 1280, height: 800 });
-        await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight / 3));
-        await new Promise(r => setTimeout(r, 1000));
-        await CrawlerService.dismissCookieBanners(page);
-        const servicesBuffer = await page.screenshot({ type: 'jpeg', quality: 70 }) as Buffer;
-        screenshots.push({ type: 'services_page', url: await uploadToCloudinary(servicesBuffer) });
+        try {
+          await page.setViewport({ width: 1280, height: 800 });
+          await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight / 3));
+          await new Promise(r => setTimeout(r, 800));
+          await CrawlerService.dismissCookieBanners(page);
+          const servicesBuffer = await page.screenshot({ type: 'jpeg', quality: 70 }) as Buffer;
+          const servicesUrl = await uploadToCloudinary(servicesBuffer, 'services_page');
+          screenshots.push({ type: 'services_page', url: servicesUrl });
+        } catch (err: any) {
+          console.warn(`[CrawlerService] Error en captura services_page: ${err.message}`);
+        }
 
         // 5. Contact (Mock)
-        await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight / 2));
-        await new Promise(r => setTimeout(r, 1000));
-        await CrawlerService.dismissCookieBanners(page);
-        const contactBuffer = await page.screenshot({ type: 'jpeg', quality: 70 }) as Buffer;
-        screenshots.push({ type: 'contact_page', url: await uploadToCloudinary(contactBuffer) });
+        try {
+          await page.evaluate(() => window.scrollTo(0, (document.body.scrollHeight / 3) * 2));
+          await new Promise(r => setTimeout(r, 800));
+          await CrawlerService.dismissCookieBanners(page);
+          const contactBuffer = await page.screenshot({ type: 'jpeg', quality: 70 }) as Buffer;
+          const contactUrl = await uploadToCloudinary(contactBuffer, 'contact_page');
+          screenshots.push({ type: 'contact_page', url: contactUrl });
+        } catch (err: any) {
+          console.warn(`[CrawlerService] Error en captura contact_page: ${err.message}`);
+        }
 
         // 6. Extraer Identidad de Marca y Colores Computados del DOM Real
         try {
