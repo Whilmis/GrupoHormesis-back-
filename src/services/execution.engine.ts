@@ -7,6 +7,22 @@ import { v2 as cloudinary } from 'cloudinary';
 import jwt from 'jsonwebtoken';
 import prisma from '../config/db';
 
+export function getFrontendUrl(): string {
+  const envUrl = process.env.FRONTEND_URL?.trim();
+  if (envUrl && !envUrl.includes('localhost') && !envUrl.includes('127.0.0.1')) {
+    return envUrl.replace(/\/$/, '');
+  }
+  return 'https://grupohormesis.es';
+}
+
+export function getBackendUrl(): string {
+  const envUrl = process.env.BACKEND_URL?.trim();
+  if (envUrl && !envUrl.includes('localhost') && !envUrl.includes('127.0.0.1')) {
+    return envUrl.replace(/\/$/, '');
+  }
+  return 'https://hormesis-back-production.up.railway.app';
+}
+
 async function generateMagicLink(leadId: string, calendarId: string): Promise<string | null> {
   const lead = await prisma.lead.findUnique({
     where: { id: leadId }
@@ -20,7 +36,7 @@ async function generateMagicLink(leadId: string, calendarId: string): Promise<st
       },
       process.env.JWT_SECRET || 'tu_secreto_super_seguro_aqui_123!'
     );
-    const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
+    const frontendUrl = getFrontendUrl();
     return `${frontendUrl}/book/${calendarId}?token=${token}`;
   }
   return null;
@@ -570,7 +586,8 @@ class AutoOutreachGoogleMapsWorkflow extends BaseWorkflowType {
     });
 
     let sentCount = 0;
-    const backendUrl = process.env.BACKEND_URL || 'http://localhost:3000';
+    const backendUrl = getBackendUrl();
+    const frontendUrl = getFrontendUrl();
 
     for (const lead of leads) {
       // 5.1 Pre-flight: Validación profunda de entregabilidad y estado real del servidor de correo
@@ -818,7 +835,10 @@ class AutoOutreachGoogleMapsWorkflow extends BaseWorkflowType {
           .replace(/{{Empresa}}/gi, clientName)
           .replace(/{{magic_link}}/gi, magicLink)
           .replace(/\[magic_link\]/gi, magicLink)
-          .replace(/{{link_magico}}/gi, magicLink);
+          .replace(/{{link_magico}}/gi, magicLink)
+          .replace(/{{mockup_url}}/gi, fullScreenMockupUrl)
+          .replace(/\[mockup_url\]/gi, fullScreenMockupUrl)
+          .replace(/{{enlace_maqueta}}/gi, fullScreenMockupUrl);
       };
 
       // 13. Limpieza y saneamiento del texto generado por IA para evitar duplicación de botones, footers o banners
@@ -965,6 +985,17 @@ Teléfono: ${lead.phone || '[Tu Teléfono]'}`;
           </table>
         </div>
       `;
+
+      // Sanitización estricta: Garantizar que NINGÚN enlace local (localhost) viaje en el correo
+      clientBody = clientBody
+        .replace(/https?:\/\/localhost:5173/gi, frontendUrl)
+        .replace(/https?:\/\/127\.0\.0\.1:5173/gi, frontendUrl)
+        .replace(/https?:\/\/localhost:3000/gi, backendUrl)
+        .replace(/https?:\/\/127\.0\.0\.1:3000/gi, backendUrl);
+
+      clientSubject = clientSubject
+        .replace(/https?:\/\/localhost:\d+/gi, '')
+        .replace(/https?:\/\/127\.0\.0\.1:\d+/gi, '');
 
       try {
         await transporter.sendMail({

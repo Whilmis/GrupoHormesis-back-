@@ -193,7 +193,7 @@ export const bookMeeting = async (req: Request, res: Response) => {
         sendUpdates: 'all', // 🔥 ESTO HACE QUE GOOGLE ENVÍE EL CORREO AUTOMÁTICAMENTE
         requestBody: {
           summary: `Reunión: ${guestName} - ${calendar.name}`,
-          description: `${notes ? String(notes).substring(0, 1000) : ''}\n\n[CRM Info]\nLead ID: ${leadId || 'N/A'}\nEnlace Lead: ${process.env.FRONTEND_URL || 'http://localhost:5173'}/portal/leads`,
+          description: `${notes ? String(notes).substring(0, 1000) : ''}\n\n[CRM Info]\nLead ID: ${leadId || 'N/A'}\nEnlace Lead: ${process.env.FRONTEND_URL && !process.env.FRONTEND_URL.includes('localhost') ? process.env.FRONTEND_URL.replace(/\/$/, '') : 'https://grupohormesis.es'}/portal/leads`,
           start: { dateTime: start.toISOString(), timeZone: finalTimezone },
           end: { dateTime: end.toISOString(), timeZone: finalTimezone },
           attendees: [{ email: guestEmail }],

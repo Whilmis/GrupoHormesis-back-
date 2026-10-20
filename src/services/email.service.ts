@@ -41,8 +41,10 @@ export const sendVerificationEmail = async (to: string, token: string) => {
   try {
     const emailTransporter = await initTransporter();
     
-    // Asumiendo que el frontend corre en localhost:5173
-    const verificationLink = `http://localhost:5173/confirmar-email?token=${token}`;
+    const frontendUrl = process.env.FRONTEND_URL && !process.env.FRONTEND_URL.includes('localhost')
+      ? process.env.FRONTEND_URL.replace(/\/$/, '')
+      : 'https://grupohormesis.es';
+    const verificationLink = `${frontendUrl}/confirmar-email?token=${token}`;
     const senderAddress = process.env.SMTP_FROM || '"Portal Grupo Hormesis" <no-reply@grupohormesis.com>';
 
     const info = await emailTransporter.sendMail({

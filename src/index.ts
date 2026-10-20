@@ -43,7 +43,7 @@ app.use(express.json());
 app.get('/api/health', (req, res) => {
   res.json({
     status: 'ok',
-    version: '1.0.6-docker',
+    version: '1.0.7-docker',
     chromium: process.env.PUPPETEER_EXECUTABLE_PATH || 'not_set',
     timestamp: new Date().toISOString()
   });
