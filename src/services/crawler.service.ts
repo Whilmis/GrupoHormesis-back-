@@ -9,6 +9,62 @@ export interface WebsiteAnalysis {
 }
 
 export class CrawlerService {
+  static async getBrowserLaunchOptions(customArgs: string[] = []): Promise<any> {
+    const fs = await import('fs');
+    const { execSync } = await import('child_process');
+
+    const args = [
+      '--no-sandbox',
+      '--disable-setuid-sandbox',
+      '--disable-dev-shm-usage',
+      '--disable-gpu',
+      '--no-first-run',
+      '--no-zygote',
+      '--single-process',
+      ...customArgs
+    ];
+
+    let executablePath: string | undefined = process.env.PUPPETEER_EXECUTABLE_PATH;
+    if (!executablePath) {
+      const candidates = [
+        '/root/.nix-profile/bin/chromium',
+        '/etc/profiles/per-user/root/bin/chromium',
+        '/usr/bin/chromium',
+        '/usr/bin/chromium-browser',
+        '/usr/bin/google-chrome-stable',
+        '/usr/bin/google-chrome'
+      ];
+      for (const c of candidates) {
+        try {
+          if (fs.existsSync(c)) {
+            executablePath = c;
+            break;
+          }
+        } catch (e) {}
+      }
+    }
+
+    if (!executablePath) {
+      try {
+        const which = execSync('which chromium 2>/dev/null || which chromium-browser 2>/dev/null || which google-chrome 2>/dev/null', { encoding: 'utf8' }).trim();
+        if (which && fs.existsSync(which)) {
+          executablePath = which;
+        }
+      } catch (e) {}
+    }
+
+    console.log(`[CrawlerService] Launching browser with executablePath: ${executablePath || 'bundled'}`);
+
+    const options: any = {
+      headless: true,
+      args
+    };
+    if (executablePath) {
+      options.executablePath = executablePath;
+    }
+    return options;
+  }
+
   static async analyzeWebsiteAndCapture(url: string): Promise<WebsiteAnalysis> {
     console.log(`[CrawlerService] Iniciando análisis para: ${url}`);
     
@@ -20,12 +76,10 @@ export class CrawlerService {
       secure: true
     });
     
-    // 1. Lanzar Puppeteer (dynamic import para evitar errores ESM en CommonJS)
+    // 1. Lanzar Puppeteer
     const { default: puppeteer } = await import('puppeteer');
-    const browser = await puppeteer.launch({
-      headless: true,
-      args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu', '--no-first-run', '--no-zygote', '--window-size=1280,800']
-    });
+    const launchOptions = await CrawlerService.getBrowserLaunchOptions(['--window-size=1280,800']);
+    const browser = await puppeteer.launch(launchOptions);
     
     try {
       const page = await browser.newPage();
@@ -177,17 +231,8 @@ export class CrawlerService {
     let browser: any = null;
     try {
       const { default: puppeteer } = await import('puppeteer');
-      browser = await puppeteer.launch({
-        headless: true,
-        args: [
-          '--no-sandbox',
-          '--disable-setuid-sandbox',
-          '--disable-dev-shm-usage',
-          '--disable-gpu',
-          '--no-first-run',
-          '--no-zygote'
-        ]
-      });
+      const launchOptions = await CrawlerService.getBrowserLaunchOptions();
+      browser = await puppeteer.launch(launchOptions);
     } catch (launchErr: any) {
       console.warn(`[CrawlerService] No se pudo lanzar Puppeteer (${launchErr.message}). Fallback a análisis por HTTP.`);
     }

@@ -27,10 +27,8 @@ async function generateMagicLink(leadId: string, calendarId: string): Promise<st
 
 export async function captureMockupScreenshot(mockupHtml: string, leadId: string): Promise<string> {
   const { default: puppeteer } = await import('puppeteer');
-  const browser = await puppeteer.launch({
-    headless: true,
-    args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu', '--no-first-run', '--no-zygote']
-  });
+  const launchOptions = await CrawlerService.getBrowserLaunchOptions();
+  const browser = await puppeteer.launch(launchOptions);
 
   try {
     const page = await browser.newPage();
@@ -245,10 +243,8 @@ async function generateComparisonGif(
       const afterDataUri = `data:image/jpeg;base64,${afterBuf.toString('base64')}`;
 
       const { default: puppeteer } = await import('puppeteer');
-      const browser = await puppeteer.launch({
-        headless: true,
-        args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu', '--no-first-run', '--no-zygote']
-      });
+      const launchOptions = await CrawlerService.getBrowserLaunchOptions();
+      const browser = await puppeteer.launch(launchOptions);
 
       try {
         const page = await browser.newPage();

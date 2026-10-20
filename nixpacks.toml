@@ -1,40 +1,21 @@
 [phases.setup]
 nixPkgs = [
-    "nodejs_22",
-    "alsa-lib",
-    "at-spi2-atk",
+    "nodejs",
+    "chromium",
+    "nss",
     "atk",
-    "cairo",
+    "at-spi2-atk",
     "cups",
     "dbus",
-    "expat",
-    "fontconfig",
-    "freetype",
-    "glib",
-    "gtk3",
     "libdrm",
-    "libgbm",
-    "libnspr4",
-    "libnss3",
-    "libpciaccess",
-    "libxkbcommon",
-    "nspr",
-    "nss",
+    "gtk3",
     "pango",
-    "xdg-utils",
-    "xorg.libX11",
-    "xorg.libXcomposite",
-    "xorg.libXcursor",
-    "xorg.libXdamage",
-    "xorg.libXext",
-    "xorg.libXfixes",
-    "xorg.libXi",
-    "xorg.libXrandr",
-    "xorg.libXrender",
-    "xorg.libXScrnSaver",
-    "xorg.libXtst",
-    "zlib"
+    "mesa",
+    "alsa-lib"
 ]
 
 [phases.build]
-cmds = ["prisma generate", "npx puppeteer browsers install chrome"]
+cmds = ["npm run build"]
+
+[start]
+cmd = "npm run start"

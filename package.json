@@ -8,8 +8,7 @@
   "main": "index.js",
   "scripts": {
     "dev": "tsx watch src/index.ts",
-    "build": "prisma generate && npx puppeteer browsers install chrome",
-    "postinstall": "npx puppeteer browsers install chrome",
+    "build": "prisma generate",
     "start": "tsx src/index.ts"
   },
   "keywords": [],
