@@ -39,6 +39,16 @@ app.use(cors({
 
 app.use(express.json());
 
+// Health check
+app.get('/api/health', (req, res) => {
+  res.json({
+    status: 'ok',
+    version: '1.0.4-docker',
+    chromium: process.env.PUPPETEER_EXECUTABLE_PATH || 'not_set',
+    timestamp: new Date().toISOString()
+  });
+});
+
 // Routes
 app.use('/api/auth', authRoutes);
 app.use('/api/users', userRoutes);
