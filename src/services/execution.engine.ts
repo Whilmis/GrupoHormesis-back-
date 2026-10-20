@@ -29,7 +29,7 @@ export async function captureMockupScreenshot(mockupHtml: string, leadId: string
   const { default: puppeteer } = await import('puppeteer');
   const browser = await puppeteer.launch({
     headless: true,
-    args: ['--no-sandbox', '--disable-setuid-sandbox']
+    args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu', '--no-first-run', '--no-zygote']
   });
 
   try {
@@ -247,7 +247,7 @@ async function generateComparisonGif(
       const { default: puppeteer } = await import('puppeteer');
       const browser = await puppeteer.launch({
         headless: true,
-        args: ['--no-sandbox', '--disable-setuid-sandbox']
+        args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu', '--no-first-run', '--no-zygote']
       });
 
       try {

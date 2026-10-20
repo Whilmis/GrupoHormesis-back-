@@ -24,7 +24,7 @@ export class CrawlerService {
     const { default: puppeteer } = await import('puppeteer');
     const browser = await puppeteer.launch({
       headless: true,
-      args: ['--no-sandbox', '--disable-setuid-sandbox', '--window-size=1280,800']
+      args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu', '--no-first-run', '--no-zygote', '--window-size=1280,800']
     });
     
     try {
@@ -169,119 +169,150 @@ export class CrawlerService {
       });
     };
     
-    const { default: puppeteer } = await import('puppeteer');
-    const browser = await puppeteer.launch({
-      headless: true,
-      args: ['--no-sandbox', '--disable-setuid-sandbox']
-    });
-    
     const screenshots: { type: string; url: string }[] = [];
     let htmlSourceUrl = '';
     let htmlContent = '';
     let brandIdentity: any = null;
-    
+
+    let browser: any = null;
     try {
-      const page = await browser.newPage();
-      
-      // 1. Desktop Hero
-      await page.setViewport({ width: 1280, height: 800 });
-      await page.goto(url, { waitUntil: 'networkidle2', timeout: 30000 });
-      await CrawlerService.dismissCookieBanners(page);
-      htmlContent = await page.content();
-      const heroDesktopBuffer = await page.screenshot({ type: 'jpeg', quality: 70 }) as Buffer;
-      screenshots.push({ type: 'desktop_home', url: await uploadToCloudinary(heroDesktopBuffer) });
-      
-      // 2. Desktop Footer
-      await page.evaluate(() => {
-        window.scrollTo(0, document.body.scrollHeight);
+      const { default: puppeteer } = await import('puppeteer');
+      browser = await puppeteer.launch({
+        headless: true,
+        args: [
+          '--no-sandbox',
+          '--disable-setuid-sandbox',
+          '--disable-dev-shm-usage',
+          '--disable-gpu',
+          '--no-first-run',
+          '--no-zygote'
+        ]
       });
-      await new Promise(r => setTimeout(r, 1000));
-      await CrawlerService.dismissCookieBanners(page);
-      const footerDesktopBuffer = await page.screenshot({ type: 'jpeg', quality: 70 }) as Buffer;
-      screenshots.push({ type: 'desktop_footer', url: await uploadToCloudinary(footerDesktopBuffer) });
-      
-      // 3. Mobile Hero
-      await page.setViewport({ width: 375, height: 812, isMobile: true });
-      await page.goto(url, { waitUntil: 'networkidle2', timeout: 30000 });
-      await CrawlerService.dismissCookieBanners(page);
-      const heroMobileBuffer = await page.screenshot({ type: 'jpeg', quality: 70 }) as Buffer;
-      screenshots.push({ type: 'mobile_home', url: await uploadToCloudinary(heroMobileBuffer) });
+    } catch (launchErr: any) {
+      console.warn(`[CrawlerService] No se pudo lanzar Puppeteer (${launchErr.message}). Fallback a análisis por HTTP.`);
+    }
 
-      // 4. Services (Mock)
-      await page.setViewport({ width: 1280, height: 800 });
-      await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight / 3));
-      await new Promise(r => setTimeout(r, 1000));
-      await CrawlerService.dismissCookieBanners(page);
-      const servicesBuffer = await page.screenshot({ type: 'jpeg', quality: 70 }) as Buffer;
-      screenshots.push({ type: 'services_page', url: await uploadToCloudinary(servicesBuffer) });
-
-      // 5. Contact (Mock)
-      await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight / 2));
-      await new Promise(r => setTimeout(r, 1000));
-      await CrawlerService.dismissCookieBanners(page);
-      const contactBuffer = await page.screenshot({ type: 'jpeg', quality: 70 }) as Buffer;
-      screenshots.push({ type: 'contact_page', url: await uploadToCloudinary(contactBuffer) });
-
-      // 6. Extraer Identidad de Marca y Colores Computados del DOM Real
+    if (browser) {
       try {
-        brandIdentity = await page.evaluate(() => {
-          const themeColor = document.querySelector('meta[name="theme-color"]')?.getAttribute('content') || 
-                             document.querySelector('meta[name="msapplication-TileColor"]')?.getAttribute('content') || null;
-
-          let primaryVar: string | null = null;
-          let accentVar: string | null = null;
-          try {
-            const rootStyle = window.getComputedStyle(document.documentElement);
-            const pVars = ['--primary', '--color-primary', '--primary-color', '--theme-primary', '--main-color', '--brand', '--brand-color', '--e-global-color-primary'];
-            for (const v of pVars) {
-              const val = rootStyle.getPropertyValue(v)?.trim();
-              if (val && (val.startsWith('#') || val.startsWith('rgb'))) {
-                primaryVar = val;
-                break;
-              }
-            }
-            const aVars = ['--accent', '--color-accent', '--accent-color', '--secondary', '--color-secondary', '--e-global-color-accent'];
-            for (const v of aVars) {
-              const val = rootStyle.getPropertyValue(v)?.trim();
-              if (val && (val.startsWith('#') || val.startsWith('rgb'))) {
-                accentVar = val;
-                break;
-              }
-            }
-          } catch (e) {}
-
-          let navBg: string | null = null;
-          let btnBg: string | null = null;
-          try {
-            const nav = document.querySelector('header, nav, .navbar, #header, #nav, [class*="nav" i], [class*="header" i]');
-            if (nav) navBg = window.getComputedStyle(nav).backgroundColor;
-            const btn = document.querySelector('button, .btn, a.btn, input[type="submit"], [class*="button" i]');
-            if (btn) btnBg = window.getComputedStyle(btn).backgroundColor;
-          } catch (e) {}
-
-          let logoUrl: string | null = null;
-          try {
-            const logoEl = document.querySelector('img[src*="logo" i], img[class*="logo" i], img[alt*="logo" i], .navbar-brand img, header img');
-            if (logoEl) logoUrl = (logoEl as HTMLImageElement).currentSrc || (logoEl as HTMLImageElement).src || null;
-          } catch (e) {}
-
-          return {
-            themeColor,
-            primaryVar,
-            accentVar,
-            navBg,
-            btnBg,
-            logoUrl
-          };
+        const page = await browser.newPage();
+        
+        // 1. Desktop Hero
+        await page.setViewport({ width: 1280, height: 800 });
+        await page.goto(url, { waitUntil: 'networkidle2', timeout: 30000 });
+        await CrawlerService.dismissCookieBanners(page);
+        htmlContent = await page.content();
+        const heroDesktopBuffer = await page.screenshot({ type: 'jpeg', quality: 70 }) as Buffer;
+        screenshots.push({ type: 'desktop_home', url: await uploadToCloudinary(heroDesktopBuffer) });
+        
+        // 2. Desktop Footer
+        await page.evaluate(() => {
+          window.scrollTo(0, document.body.scrollHeight);
         });
-      } catch (brandErr) {
-        console.warn('[CrawlerService] No se pudieron extraer estilos calculados:', brandErr);
+        await new Promise(r => setTimeout(r, 1000));
+        await CrawlerService.dismissCookieBanners(page);
+        const footerDesktopBuffer = await page.screenshot({ type: 'jpeg', quality: 70 }) as Buffer;
+        screenshots.push({ type: 'desktop_footer', url: await uploadToCloudinary(footerDesktopBuffer) });
+        
+        // 3. Mobile Hero
+        await page.setViewport({ width: 375, height: 812, isMobile: true });
+        await page.goto(url, { waitUntil: 'networkidle2', timeout: 30000 });
+        await CrawlerService.dismissCookieBanners(page);
+        const heroMobileBuffer = await page.screenshot({ type: 'jpeg', quality: 70 }) as Buffer;
+        screenshots.push({ type: 'mobile_home', url: await uploadToCloudinary(heroMobileBuffer) });
+
+        // 4. Services (Mock)
+        await page.setViewport({ width: 1280, height: 800 });
+        await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight / 3));
+        await new Promise(r => setTimeout(r, 1000));
+        await CrawlerService.dismissCookieBanners(page);
+        const servicesBuffer = await page.screenshot({ type: 'jpeg', quality: 70 }) as Buffer;
+        screenshots.push({ type: 'services_page', url: await uploadToCloudinary(servicesBuffer) });
+
+        // 5. Contact (Mock)
+        await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight / 2));
+        await new Promise(r => setTimeout(r, 1000));
+        await CrawlerService.dismissCookieBanners(page);
+        const contactBuffer = await page.screenshot({ type: 'jpeg', quality: 70 }) as Buffer;
+        screenshots.push({ type: 'contact_page', url: await uploadToCloudinary(contactBuffer) });
+
+        // 6. Extraer Identidad de Marca y Colores Computados del DOM Real
+        try {
+          brandIdentity = await page.evaluate(() => {
+            const themeColor = document.querySelector('meta[name="theme-color"]')?.getAttribute('content') || 
+                               document.querySelector('meta[name="msapplication-TileColor"]')?.getAttribute('content') || null;
+
+            let primaryVar: string | null = null;
+            let accentVar: string | null = null;
+            try {
+              const rootStyle = window.getComputedStyle(document.documentElement);
+              const pVars = ['--primary', '--color-primary', '--primary-color', '--theme-primary', '--main-color', '--brand', '--brand-color', '--e-global-color-primary'];
+              for (const v of pVars) {
+                const val = rootStyle.getPropertyValue(v)?.trim();
+                if (val && (val.startsWith('#') || val.startsWith('rgb'))) {
+                  primaryVar = val;
+                  break;
+                }
+              }
+              const aVars = ['--accent', '--color-accent', '--accent-color', '--secondary', '--color-secondary', '--e-global-color-accent'];
+              for (const v of aVars) {
+                const val = rootStyle.getPropertyValue(v)?.trim();
+                if (val && (val.startsWith('#') || val.startsWith('rgb'))) {
+                  accentVar = val;
+                  break;
+                }
+              }
+            } catch (e) {}
+
+            let navBg: string | null = null;
+            let btnBg: string | null = null;
+            try {
+              const nav = document.querySelector('header, nav, .navbar, #header, #nav, [class*="nav" i], [class*="header" i]');
+              if (nav) navBg = window.getComputedStyle(nav).backgroundColor;
+              const btn = document.querySelector('button, .btn, a.btn, input[type="submit"], [class*="button" i]');
+              if (btn) btnBg = window.getComputedStyle(btn).backgroundColor;
+            } catch (e) {}
+
+            let logoUrl: string | null = null;
+            try {
+              const logoEl = document.querySelector('img[src*="logo" i], img[class*="logo" i], img[alt*="logo" i], .navbar-brand img, header img');
+              if (logoEl) logoUrl = (logoEl as HTMLImageElement).currentSrc || (logoEl as HTMLImageElement).src || null;
+            } catch (e) {}
+
+            return {
+              themeColor,
+              primaryVar,
+              accentVar,
+              navBg,
+              btnBg,
+              logoUrl
+            };
+          });
+        } catch (brandErr) {
+          console.warn('[CrawlerService] No se pudieron extraer estilos calculados:', brandErr);
+        }
+      } catch (error) {
+        console.error(`[CrawlerService] Error durante navegación con Puppeteer en ${url}:`, error);
+      } finally {
+        try { await browser.close(); } catch (cErr) {}
       }
-      
-    } catch (error) {
-      console.error(`[CrawlerService] Error analizando ${url}:`, error);
-    } finally {
-      await browser.close();
+    }
+
+    // Fallback: Si no se obtuvo HTML via Puppeteer, obtenerlo via fetch HTTP directo
+    if (!htmlContent) {
+      try {
+        console.log(`[CrawlerService] Obteniendo HTML por HTTP directo para ${url}...`);
+        const fetchRes = await fetch(url, {
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+          },
+          signal: AbortSignal.timeout(10000)
+        });
+        if (fetchRes.ok) {
+          htmlContent = await fetchRes.text();
+        }
+      } catch (fErr) {
+        console.warn(`[CrawlerService] Fallback HTTP fetch falló para ${url}:`, fErr);
+      }
     }
 
     let aiAuditReport = {
