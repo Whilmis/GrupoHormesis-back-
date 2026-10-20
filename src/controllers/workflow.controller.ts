@@ -140,13 +140,15 @@ export const workflowController = {
 
   // --- EJECUCION MANUAL ---
   async executeWorkflow(req: Request, res: Response) {
+    const { id } = req.params;
+    console.log(`[workflowController] === executeWorkflow START for ID: ${id} ===`);
     try {
-      const { id } = req.params;
       // Ejecutar motor
       const result = await ExecutionEngine.executeWorkflow(id);
-      
+      console.log(`[workflowController] === executeWorkflow SUCCESS for ID: ${id} ===`);
       res.json({ message: 'Ejecucion completada', result });
     } catch (error: any) {
+      console.error(`[workflowController] === executeWorkflow ERROR for ID: ${id}:`, error);
       res.status(500).json({ error: error.message || 'Error en ejecucion' });
     }
   },

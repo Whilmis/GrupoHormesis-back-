@@ -3025,6 +3025,7 @@ export class ExecutionEngine {
   ];
 
   static async executeWorkflow(userWorkflowId: string, inputData?: any) {
+    console.log(`[ExecutionEngine] 1. Looking up workflow: ${userWorkflowId}`);
     // 1. Cargar el workflow con la plantilla y credenciales
     const workflow = await prisma.userWorkflow.findUnique({
       where: { id: userWorkflowId },
@@ -3034,14 +3035,17 @@ export class ExecutionEngine {
       }
     });
 
+    console.log(`[ExecutionEngine] 2. Workflow found: ${workflow?.name}, active: ${workflow?.isActive}`);
     if (!workflow) throw new Error('Workflow no encontrado');
-    if (!workflow.isActive) throw new Error('El Workflow estÃ¡ inactivo');
+    if (!workflow.isActive) throw new Error('El Workflow está inactivo');
 
-    // 2. Buscar el tipo de workflow (la lÃ³gica)
+    // 2. Buscar el tipo de workflow (la lógica)
     const engineType = this.registeredTypes.find(t => t.typeIdentifier === workflow.template.typeIdentifier);
+    console.log(`[ExecutionEngine] 3. EngineType: ${engineType?.typeIdentifier}`);
     if (!engineType) throw new Error(`Tipo de workflow no implementado: ${workflow.template.typeIdentifier}`);
 
-    // 3. Crear registro de ejecuciÃ³n
+    // 3. Crear registro de ejecución
+    console.log(`[ExecutionEngine] 4. Creating workflowExecution record...`);
     const execution = await prisma.workflowExecution.create({
       data: {
         userWorkflowId: workflow.id,
@@ -3049,9 +3053,13 @@ export class ExecutionEngine {
         logs: []
       }
     });
+    console.log(`[ExecutionEngine] 5. Created execution record: ${execution.id}`);
 
     const logs: string[] = [];
-    const logFn = (msg: string) => logs.push(`[${new Date().toISOString()}] ${msg}`);
+    const logFn = (msg: string) => {
+      console.log(`[ExecutionEngine WF ${userWorkflowId}] ${msg}`);
+      logs.push(`[${new Date().toISOString()}] ${msg}`);
+    };
 
     try {
       logFn('Preparando credenciales...');
