@@ -16,9 +16,25 @@ dotenv.config();
 const app = express();
 const port = process.env.PORT || 3000;
 
+const allowedOrigins: (string | RegExp)[] = [
+  'http://localhost:5173',
+  'http://localhost:5174',
+  'http://localhost:3000',
+  'https://grupohormesis.es',
+  'https://www.grupohormesis.es',
+  'http://grupohormesis.es',
+  'http://www.grupohormesis.es',
+  'https://hormesis-front-production.up.railway.app',
+  /^https?:\/\/(?:[a-zA-Z0-9-]+\.)*grupohormesis\.es$/,
+  ...(process.env.FRONTEND_URL ? process.env.FRONTEND_URL.split(',').map(u => u.trim().replace(/\/$/, '')) : [])
+].filter(Boolean);
+
 app.use(cors({
-  origin: ['http://localhost:5173', 'http://localhost:5174'],
-  credentials: true
+  origin: allowedOrigins,
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'Origin'],
+  optionsSuccessStatus: 200
 }));
 
 app.use(express.json());
