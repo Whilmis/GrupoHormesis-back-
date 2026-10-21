@@ -1,3 +1,10 @@
+import dns from 'node:dns';
+try {
+  dns.setDefaultResultOrder('ipv4first');
+} catch (e) {
+  // Ignore in case of older node
+}
+
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
@@ -46,7 +53,7 @@ app.get('/api/health', async (req, res) => {
     const execCount = await prisma.workflowExecution.count();
     res.json({
       status: 'ok',
-      version: '1.0.8-docker',
+      version: '1.0.9-docker',
       execCount,
       dbHost: process.env.DATABASE_URL ? new URL(process.env.DATABASE_URL).host : 'none',
       chromium: process.env.PUPPETEER_EXECUTABLE_PATH || 'not_set',
@@ -55,7 +62,7 @@ app.get('/api/health', async (req, res) => {
   } catch (err: any) {
     res.status(500).json({
       status: 'db_error',
-      version: '1.0.8-docker',
+      version: '1.0.9-docker',
       error: err.message,
       timestamp: new Date().toISOString()
     });

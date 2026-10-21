@@ -576,13 +576,19 @@ class AutoOutreachGoogleMapsWorkflow extends BaseWorkflowType {
 
     context.log(`Se encontraron ${leads.length} leads para contactar.`);
 
-    // 5. Configurar Nodemailer
+    // 5. Configurar Nodemailer con IPv4 forzada y timeouts estrictos para Railway / Docker
     const transporter = nodemailer.createTransport({
-      service: 'gmail',
+      host: 'smtp.gmail.com',
+      port: 465,
+      secure: true,
       auth: {
         user: gmailAddress,
         pass: gmailAppPassword
-      }
+      },
+      family: 4, // Forzar IPv4 para evitar ENETUNREACH / 2min timeout por IPv6 en Railway
+      connectionTimeout: 10000,
+      greetingTimeout: 10000,
+      socketTimeout: 15000
     });
 
     let sentCount = 0;
@@ -2973,13 +2979,19 @@ class FormContactWorkflow extends BaseWorkflowType {
       }
     }
 
-    // Configurar transporte nodemailer
+    // Configurar transporte nodemailer con IPv4 forzada
     const transporter = nodemailer.createTransport({
-      service: 'gmail',
+      host: 'smtp.gmail.com',
+      port: 465,
+      secure: true,
       auth: {
         user: gmailAddress,
         pass: gmailAppPassword
-      }
+      },
+      family: 4,
+      connectionTimeout: 10000,
+      greetingTimeout: 10000,
+      socketTimeout: 15000
     });
 
     await transporter.sendMail({

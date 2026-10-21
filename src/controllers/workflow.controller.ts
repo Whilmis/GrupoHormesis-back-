@@ -143,10 +143,35 @@ export const workflowController = {
     const { id } = req.params;
     console.log(`[workflowController] === executeWorkflow START for ID: ${id} ===`);
     try {
-      // Ejecutar motor
-      const result = await ExecutionEngine.executeWorkflow(id);
+      // Race de seguridad de 25s: Si un workflow con muchas tareas toma más tiempo,
+      // respondemos 200 con ejecución en segundo plano para evitar que el proxy de Railway (60s)
+      // corte la conexión con 502 Bad Gateway y bloqueos de CORS.
+      const executionPromise = ExecutionEngine.executeWorkflow(id);
+      const timeoutPromise = new Promise<{ isTimeout: true }>((resolve) => {
+        setTimeout(() => resolve({ isTimeout: true }), 25000);
+      });
+
+      const outcome = await Promise.race([
+        executionPromise.then(result => ({ isTimeout: false, result })),
+        timeoutPromise
+      ]);
+
+      if (outcome.isTimeout) {
+        console.log(`[workflowController] Workflow ID ${id} supera los 25s. Respondiendo 200 en segundo plano.`);
+        // Asegurar que errores en background no queden sin atrapar
+        executionPromise.catch(err => {
+          console.error(`[workflowController] Error en background para WF ${id}:`, err);
+        });
+
+        res.json({
+          message: 'El workflow se está ejecutando en segundo plano. Puedes revisar los avances en el panel.',
+          runningInBackground: true
+        });
+        return;
+      }
+
       console.log(`[workflowController] === executeWorkflow SUCCESS for ID: ${id} ===`);
-      res.json({ message: 'Ejecucion completada', result });
+      res.json({ message: 'Ejecucion completada', result: outcome.result });
     } catch (error: any) {
       console.error(`[workflowController] === executeWorkflow ERROR for ID: ${id}:`, error);
       res.status(500).json({ error: error.message || 'Error en ejecucion' });
