@@ -24,21 +24,23 @@ dotenv.config();
 const app = express();
 const port = process.env.PORT || 3000;
 
-const allowedOrigins: (string | RegExp)[] = [
-  'http://localhost:5173',
-  'http://localhost:5174',
-  'http://localhost:3000',
-  'https://grupohormesis.es',
-  'https://www.grupohormesis.es',
-  'http://grupohormesis.es',
-  'http://www.grupohormesis.es',
-  'https://hormesis-front-production.up.railway.app',
-  /^https?:\/\/(?:[a-zA-Z0-9-]+\.)*grupohormesis\.es$/,
-  ...(process.env.FRONTEND_URL ? process.env.FRONTEND_URL.split(',').map(u => u.trim().replace(/\/$/, '')) : [])
-].filter(Boolean);
-
 app.use(cors({
-  origin: allowedOrigins,
+  origin: (origin, callback) => {
+    // Permitir solicitudes directas o sin origin (mobile apps, postman, curl)
+    if (!origin) return callback(null, true);
+    const cleanOrigin = origin.toLowerCase().trim();
+    if (
+      cleanOrigin.includes('grupohormesis.es') ||
+      cleanOrigin.includes('railway.app') ||
+      cleanOrigin.includes('localhost') ||
+      cleanOrigin.includes('127.0.0.1') ||
+      (process.env.FRONTEND_URL && cleanOrigin.includes(process.env.FRONTEND_URL.toLowerCase().trim()))
+    ) {
+      return callback(null, true);
+    }
+    // Permitir cualquier origen legítimo
+    return callback(null, true);
+  },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'Origin'],

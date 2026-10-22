@@ -148,7 +148,7 @@ export const workflowController = {
       // corte la conexión con 502 Bad Gateway y bloqueos de CORS.
       const executionPromise = ExecutionEngine.executeWorkflow(id);
       const timeoutPromise = new Promise<{ isTimeout: true }>((resolve) => {
-        setTimeout(() => resolve({ isTimeout: true }), 25000);
+        setTimeout(() => resolve({ isTimeout: true }), 12000);
       });
 
       const outcome = await Promise.race([
