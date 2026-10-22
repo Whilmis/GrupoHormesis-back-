@@ -653,8 +653,12 @@ class AutoOutreachGoogleMapsWorkflow extends BaseWorkflowType {
         }
       }
 
-      // Enlace para ver la maqueta en pantalla completa
-      const fullScreenMockupUrl = `${backendUrl}/api/leads/public/${lead.id}/mockup`;
+      // Enlace para ver la maqueta en pantalla completa (con fallback query params resilientes)
+      const qParams = new URLSearchParams();
+      if (lead.businessName) qParams.set('name', lead.businessName);
+      if (lead.website) qParams.set('web', lead.website);
+      const qStr = qParams.toString() ? `?${qParams.toString()}` : '';
+      const fullScreenMockupUrl = `${backendUrl}/api/leads/public/${lead.id}/mockup${qStr}`;
 
       // 7. Generar GIF Animado Antes vs Después para este lead (Composición enmarcada con Captura Real de la Propuesta)
       let proposalScreenshotUrl = meta?.mockupScreenshotUrl || meta?.creativeAssets?.mockup?.previewImageUrl;
