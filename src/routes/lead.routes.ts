@@ -3,6 +3,7 @@ import { getLeadActivities, createLeadActivity, getColaboradorLeads, updateLeadS
 import { requireAuth } from '../middlewares/auth.middleware';
 import prisma from '../config/db';
 import { extractBrandAssets, generateConceptualDesignHtml, sanitizeAndGuardMockupHtml } from '../services/execution.engine';
+import { getDesignTrendKnowledge } from '../services/design-trends.service';
 
 const router = Router();
 
@@ -23,6 +24,7 @@ router.get('/public/:leadId/mockup', async (req, res) => {
           const leadName = queryName || 'Empresa';
           const website = queryWeb || '';
           const brandAssets = await extractBrandAssets(website, leadName, leadId, '', {});
+          const designTrend = getDesignTrendKnowledge(leadName, brandAssets.layoutArchetype);
           const rawHtml = generateConceptualDesignHtml(
             leadName,
             website,
@@ -32,7 +34,9 @@ router.get('/public/:leadId/mockup', async (req, res) => {
             brandAssets.layoutArchetype,
             (req.query.phone as string) || '',
             'España',
-            4.9
+            4.9,
+            {},
+            designTrend
           );
           const dynamicHtml = sanitizeAndGuardMockupHtml(rawHtml, leadName, brandAssets.palette, brandAssets.images, brandAssets.fallbackImages, website);
           res.setHeader('Content-Type', 'text/html; charset=utf-8');
@@ -80,6 +84,7 @@ router.get('/public/:leadId/mockup', async (req, res) => {
       try {
         const leadName = lead.businessName || lead.contactName || 'Empresa';
         const brandAssets = await extractBrandAssets(lead.website || '', leadName, lead.id, '', meta);
+        const designTrend = getDesignTrendKnowledge((lead as any).notes || meta?.niche || meta?.category || leadName, brandAssets.layoutArchetype);
         const rawHtml = generateConceptualDesignHtml(
           leadName,
           lead.website || '',
@@ -89,7 +94,9 @@ router.get('/public/:leadId/mockup', async (req, res) => {
           brandAssets.layoutArchetype,
           lead.phone || (meta as any).phone || '',
           (meta as any).address || 'España',
-          (meta as any).rating || 4.9
+          (meta as any).rating || 4.9,
+          meta,
+          designTrend
         );
         html = sanitizeAndGuardMockupHtml(rawHtml, leadName, brandAssets.palette, brandAssets.images, brandAssets.fallbackImages, lead.website || '');
         meta.generatedMockup = html;

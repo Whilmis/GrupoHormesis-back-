@@ -6,6 +6,12 @@ import nodemailer from 'nodemailer';
 import { v2 as cloudinary } from 'cloudinary';
 import jwt from 'jsonwebtoken';
 import prisma from '../config/db';
+import {
+  generateArchetypeHtml,
+  searchDesignTrendReferences,
+  getDesignTrendKnowledge,
+  DesignTrendReference
+} from './design-trends.service';
 
 export function getFrontendUrl(): string {
   const envUrl = process.env.FRONTEND_URL?.trim();
@@ -647,6 +653,7 @@ class AutoOutreachGoogleMapsWorkflow extends BaseWorkflowType {
         try {
           const brandAssets = await extractBrandAssets(lead.website || '', lead.businessName || 'Empresa', lead.id, (lead as any).notes || '', meta);
           mockupHeroImage = brandAssets.images.hero;
+          const designTrend = getDesignTrendKnowledge((lead as any).notes || meta?.niche || meta?.category || lead.businessName || '', brandAssets.layoutArchetype);
           const fallbackHtml = generateConceptualDesignHtml(
             lead.businessName || 'Empresa',
             lead.website || '',
@@ -656,7 +663,9 @@ class AutoOutreachGoogleMapsWorkflow extends BaseWorkflowType {
             brandAssets.layoutArchetype,
             (lead as any).phone || '',
             (lead as any).address || 'España',
-            (lead as any).rating || 4.9
+            (lead as any).rating || 4.9,
+            meta,
+            designTrend
           );
           mockupHtml = sanitizeAndGuardMockupHtml(fallbackHtml, lead.businessName || 'Empresa', brandAssets.palette, brandAssets.images, brandAssets.fallbackImages, lead.website || undefined);
           meta.generatedMockup = mockupHtml;
@@ -1979,568 +1988,23 @@ export function generateConceptualDesignHtml(
   archetype: string,
   leadPhone: string,
   leadAddress: string,
-  leadRating: number
+  leadRating: number,
+  nicheOrMeta?: any,
+  designTrend?: DesignTrendReference
 ): string {
-  return `
-<!DOCTYPE html>
-<html lang="es">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>${leadName} | Propuesta de Rediseño Oficial 2026</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
-  <style>
-    :root {
-      --primary: ${brandPalette.primary};
-      --primary-accent: ${brandPalette.accent};
-      --primary-gradient: linear-gradient(135deg, ${brandPalette.primary} 0%, ${brandPalette.accent} 100%);
-      --bg: ${brandPalette.background};
-      --bg-surface: ${brandPalette.surface};
-      --text-main: ${brandPalette.textColor};
-      --text-muted: #64748b;
-      --border-color: rgba(226, 232, 240, 0.85);
-      --shadow-sm: 0 2px 4px rgba(0,0,0,0.02);
-      --shadow-md: 0 10px 25px -5px rgba(15, 23, 42, 0.08);
-      --shadow-lg: 0 25px 50px -12px rgba(15, 23, 42, 0.15);
-    }
-    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-    html, body {
-      max-width: 100%;
-      overflow-x: hidden;
-      min-height: 100%;
-    }
-    body {
-      font-family: 'Plus Jakarta Sans', -apple-system, sans-serif;
-      background-color: var(--bg);
-      background-image: 
-        radial-gradient(at 90% 0%, ${brandPalette.accent}14 0px, transparent 50%),
-        radial-gradient(at 0% 40%, ${brandPalette.primary}10 0px, transparent 40%);
-      background-attachment: fixed;
-      color: var(--text-main);
-      line-height: 1.6;
-      -webkit-font-smoothing: antialiased;
-    }
-    .topbar {
-      background: var(--primary);
-      color: #ffffff;
-      padding: 9px 24px;
-      font-size: 0.83rem;
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      flex-wrap: wrap;
-      gap: 10px;
-    }
-    .topbar a { color: #ffffff; text-decoration: underline; font-weight: 700; }
-    .navbar {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      padding: 16px 36px;
-      background: rgba(255, 255, 255, 0.94);
-      backdrop-filter: blur(16px);
-      -webkit-backdrop-filter: blur(16px);
-      border-bottom: 1px solid var(--border-color);
-      position: sticky;
-      top: 0;
-      z-index: 50;
-      max-width: 100%;
-    }
-    .logo-container {
-      display: flex;
-      align-items: center;
-      gap: 12px;
-    }
-    .logo-img {
-      max-height: 44px;
-      max-width: 190px;
-      object-fit: contain;
-    }
-    .logo-text {
-      font-size: 1.35rem;
-      font-weight: 800;
-      letter-spacing: -0.03em;
-      color: var(--primary);
-      display: inline-block;
-    }
-    .nav-links {
-      display: flex;
-      gap: 28px;
-      list-style: none;
-      align-items: center;
-      flex-wrap: wrap;
-    }
-    .nav-links a {
-      color: var(--text-muted);
-      text-decoration: none;
-      font-size: 0.92rem;
-      font-weight: 600;
-      transition: color 0.2s;
-    }
-    .nav-links a:hover { color: var(--primary-accent); }
-    @media (max-width: 868px) { .nav-links { display: none; } }
-    .nav-cta {
-      background: var(--primary-accent);
-      color: #ffffff;
-      padding: 10px 24px;
-      border-radius: 9999px;
-      font-weight: 700;
-      font-size: 0.9rem;
-      text-decoration: none;
-      box-shadow: 0 8px 18px rgba(0,0,0,0.15);
-      transition: transform 0.2s;
-      white-space: nowrap;
-    }
-    .nav-cta:hover { transform: translateY(-2px); }
-    .hero {
-      max-width: 1240px;
-      margin: 0 auto;
-      padding: 60px 24px 70px 24px;
-      display: grid;
-      grid-template-columns: 1.18fr 0.82fr;
-      gap: 50px;
-      align-items: center;
-      min-height: auto;
-    }
-    @media (max-width: 960px) { .hero { grid-template-columns: 1fr; padding: 40px 20px; } }
-    .vanguard-pill {
-      display: inline-flex;
-      align-items: center;
-      gap: 8px;
-      background: #eff6ff;
-      border: 1px solid #bfdbfe;
-      color: var(--primary);
-      padding: 6px 16px;
-      border-radius: 9999px;
-      font-size: 0.85rem;
-      font-weight: 700;
-      margin-bottom: 22px;
-      max-width: calc(100% - 24px);
-    }
-    .pulse-dot { width: 8px; height: 8px; background: ${brandPalette.accent}; border-radius: 50%; box-shadow: 0 0 0 3px rgba(0,0,0,0.1); }
-    .hero-title {
-      font-size: clamp(2rem, 4.5vw, 3.8rem);
-      font-weight: 900;
-      line-height: 1.12;
-      letter-spacing: -0.03em;
-      color: var(--text-main);
-      margin-bottom: 22px;
-      overflow-wrap: break-word;
-      word-break: break-word;
-    }
-    .hero-title span { color: var(--primary-accent); }
-    .hero-p { font-size: 1.15rem; color: var(--text-muted); margin-bottom: 28px; max-width: 580px; overflow-wrap: break-word; }
-    .persona-tabs { display: flex; gap: 10px; margin-bottom: 28px; flex-wrap: wrap; }
-    .persona-tab {
-      background: #ffffff;
-      border: 1px solid var(--border-color);
-      padding: 6px 16px;
-      border-radius: 9999px;
-      font-size: 0.85rem;
-      font-weight: 600;
-      color: var(--text-muted);
-    }
-    .persona-tab.active {
-      background: var(--primary);
-      color: #ffffff;
-      border-color: var(--primary);
-    }
-    .hero-actions { display: flex; gap: 14px; flex-wrap: wrap; align-items: center; margin-bottom: 22px; }
-    .btn-primary {
-      background: var(--primary-accent);
-      color: white;
-      padding: 15px 32px;
-      border-radius: 14px;
-      font-weight: 700;
-      font-size: 1.02rem;
-      text-decoration: none;
-      box-shadow: 0 12px 28px rgba(0,0,0,0.15);
-      transition: transform 0.2s;
-      white-space: nowrap;
-    }
-    .btn-primary:hover { transform: translateY(-2px); }
-    .btn-whatsapp {
-      background: #25d366;
-      color: white;
-      padding: 15px 26px;
-      border-radius: 14px;
-      font-weight: 700;
-      font-size: 1.02rem;
-      text-decoration: none;
-      display: inline-flex;
-      align-items: center;
-      gap: 8px;
-      white-space: nowrap;
-    }
-    .hero-visual-wrapper {
-      position: relative;
-      padding: 14px;
-      max-width: 100%;
-    }
-    .hero-img-main {
-      width: 100%;
-      height: auto;
-      min-height: 300px;
-      max-height: 460px;
-      aspect-ratio: 4/3;
-      object-fit: cover;
-      border-radius: 28px;
-      box-shadow: var(--shadow-lg);
-      border: 1px solid rgba(0,0,0,0.06);
-    }
-    .floating-card {
-      position: absolute;
-      background: rgba(255, 255, 255, 0.96);
-      backdrop-filter: blur(14px);
-      border: 1px solid rgba(255, 255, 255, 0.9);
-      border-radius: 18px;
-      padding: 12px 18px;
-      box-shadow: 0 16px 35px rgba(0, 0, 0, 0.12);
-      display: flex;
-      align-items: center;
-      gap: 12px;
-      z-index: 10;
-      max-width: calc(100% - 28px);
-    }
-    .card-top { top: 0px; right: 0px; transform: translate(8px, -8px); }
-    .card-bottom { bottom: 0px; left: 0px; transform: translate(-8px, 8px); }
-    @media (max-width: 640px) {
-      .card-top { transform: none; top: 10px; right: 10px; }
-      .card-bottom { transform: none; bottom: 10px; left: 10px; }
-    }
-    .trust-strip {
-      max-width: 1240px;
-      margin: 0 auto;
-      padding: 24px;
-      border-top: 1px solid var(--border-color);
-      border-bottom: 1px solid var(--border-color);
-      display: flex;
-      justify-content: space-between;
-      flex-wrap: wrap;
-      gap: 20px;
-      font-size: 0.9rem;
-      font-weight: 700;
-      color: #475569;
-    }
-    .bento-section { max-width: 1240px; margin: 70px auto; padding: 0 24px; }
-    .bento-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr)); gap: 24px; margin-top: 36px; }
-    .bento-card {
-      background: var(--bg-surface);
-      border: 1px solid var(--border-color);
-      border-radius: 24px;
-      padding: 36px;
-      box-shadow: var(--shadow-sm);
-      overflow-wrap: break-word;
-    }
-    .bento-metric { font-size: 3.2rem; font-weight: 900; color: var(--primary-accent); line-height: 1; margin-bottom: 10px; }
-    .services-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr)); gap: 24px; margin-top: 36px; }
-    .service-card {
-      background: #ffffff;
-      border: 1px solid var(--border-color);
-      border-radius: 22px;
-      overflow: hidden;
-      box-shadow: var(--shadow-sm);
-    }
-    .service-img { width: 100%; height: 220px; object-fit: cover; }
-    .service-content { padding: 26px; }
-    .reviews-section { background: var(--bg-surface); padding: 70px 24px; margin-top: 70px; }
-    .reviews-grid { max-width: 1240px; margin: 36px auto 0 auto; display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr)); gap: 24px; }
-    .review-card { background: #ffffff; border: 1px solid var(--border-color); border-radius: 20px; padding: 28px; box-shadow: var(--shadow-sm); }
-    /* Sección Proceso en 4 Pasos */
-    .process-section { max-width: 1240px; margin: 80px auto; padding: 0 24px; }
-    .section-badge {
-      display: inline-block;
-      background: rgba(37, 99, 235, 0.08);
-      color: var(--primary-accent);
-      border: 1px solid rgba(37, 99, 235, 0.2);
-      font-weight: 800;
-      font-size: 0.78rem;
-      letter-spacing: 0.08em;
-      text-transform: uppercase;
-      padding: 5px 14px;
-      border-radius: 9999px;
-      margin-bottom: 12px;
-    }
-    .section-title { font-size: clamp(1.8rem, 3.5vw, 2.6rem); font-weight: 900; line-height: 1.2; margin-bottom: 12px; color: var(--text-main); }
-    .section-subtitle { font-size: 1.05rem; color: var(--text-muted); max-width: 640px; margin-bottom: 38px; }
-    .process-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr)); gap: 24px; }
-    .process-card {
-      background: #ffffff;
-      border: 1px solid var(--border-color);
-      border-radius: 22px;
-      padding: 32px 24px;
-      box-shadow: var(--shadow-sm);
-      position: relative;
-      transition: transform 0.2s, box-shadow 0.2s;
-    }
-    .process-card:hover { transform: translateY(-4px); box-shadow: var(--shadow-md); }
-    .step-num {
-      font-size: 2.4rem;
-      font-weight: 900;
-      color: var(--primary-accent);
-      opacity: 0.85;
-      line-height: 1;
-      margin-bottom: 16px;
-      font-feature-settings: "tnum";
-    }
-    .process-card h3 { font-size: 1.18rem; font-weight: 800; margin-bottom: 10px; color: var(--text-main); }
-    .process-card p { font-size: 0.92rem; color: var(--text-muted); line-height: 1.55; }
-
-    /* Sección Preguntas Frecuentes FAQ */
-    .faq-section { max-width: 1240px; margin: 80px auto; padding: 0 24px; }
-    .faq-container { display: flex; flex-direction: column; gap: 14px; margin-top: 30px; }
-    .faq-card {
-      background: #ffffff;
-      border: 1px solid var(--border-color);
-      border-radius: 18px;
-      padding: 20px 24px;
-      transition: border-color 0.2s;
-    }
-    .faq-card[open] { border-color: var(--primary-accent); box-shadow: var(--shadow-sm); }
-    .faq-question {
-      font-size: 1.05rem;
-      font-weight: 700;
-      color: var(--text-main);
-      cursor: pointer;
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      user-select: none;
-      list-style: none;
-    }
-    .faq-question::-webkit-details-marker { display: none; }
-    .faq-icon {
-      font-size: 1.3rem;
-      color: var(--primary-accent);
-      font-weight: 800;
-      transition: transform 0.2s;
-    }
-    .faq-card[open] .faq-icon { transform: rotate(45deg); }
-    .faq-answer {
-      padding-top: 14px;
-      color: var(--text-muted);
-      font-size: 0.94rem;
-      line-height: 1.6;
-      border-top: 1px solid rgba(226, 232, 240, 0.6);
-      margin-top: 12px;
-    }
-    .cta-banner {
-      max-width: 1240px;
-      margin: 70px auto;
-      padding: 50px 32px;
-      background: var(--primary-gradient);
-      border-radius: 28px;
-      color: white;
-      text-align: center;
-      box-shadow: var(--shadow-lg);
-    }
-    .footer { background: var(--primary); color: #cbd5e1; padding: 45px 24px; text-align: center; font-size: 0.88rem; }
-  </style>
-</head>
-<body>
-  <div class="topbar">
-    <div>⭐ ${leadRating} en Google Maps • Especialistas en ${leadAddress}</div>
-    <div>Atención directa: <a href="tel:${leadPhone}">${leadPhone}</a></div>
-  </div>
-
-  <header class="navbar">
-    <div class="logo-container">
-      ${catImages.logo ? `
-        <img src="${catImages.logo}" referrerpolicy="no-referrer" onerror="this.style.display='none'; var f=this.nextElementSibling; if(f) f.style.display='inline-block';" alt="${leadName}" class="logo-img">
-        <span class="logo-text" style="display: none;">${leadName}</span>
-      ` : `
-        <span class="logo-text">${leadName}</span>
-      `}
-    </div>
-    <ul class="nav-links">
-      <li><a href="#solucion">La Propuesta</a></li>
-      <li><a href="#servicios">Especialidades</a></li>
-      <li><a href="#proceso">Cómo Trabajamos</a></li>
-      <li><a href="#faq">Preguntas Frecuentes</a></li>
-      <li><a href="#contacto">Contacto</a></li>
-    </ul>
-    <a href="tel:${leadPhone}" class="nav-cta">Pedir Cita Online</a>
-  </header>
-
-  <main>
-    <section class="hero">
-      <div>
-        <div class="vanguard-pill">
-          <span class="pulse-dot"></span> Rediseño Oficial con Identidad de Marca · ${leadAddress}
-        </div>
-        <h1 class="hero-title">
-          La máxima excelencia y confianza para los clientes de <span>${leadName}</span>
-        </h1>
-        <p class="hero-p">
-          Una presencia digital concebida para transmitir autoridad instantánea, adaptada fielmente al logotipo oficial y la línea de color de tu empresa, con dirección de arte y recursos visuales de alta definición generados por Google AI.
-        </p>
-        <div class="persona-tabs">
-          <div class="persona-tab active">🏢 Soluciones Profesionales</div>
-          <div class="persona-tab">👤 Clientes Particulares</div>
-          <div class="persona-tab">⚡ Trámites Urgentes</div>
-        </div>
-        <div class="hero-actions">
-          <a href="tel:${leadPhone}" class="btn-primary">📞 Contactar Ahora ➔</a>
-          <a href="https://wa.me/?text=Hola%20${encodeURIComponent(leadName)}" class="btn-whatsapp">💬 WhatsApp Inmediato</a>
-        </div>
-      </div>
-
-      <div class="hero-visual-wrapper">
-        <img src="${catImages.hero}" referrerpolicy="no-referrer" onerror="this.onerror=null; this.src='${fallbackCat.hero}';" alt="${leadName}" class="hero-img-main">
-        <div class="floating-card card-top">
-          <div style="font-size: 1.4rem;">⭐</div>
-          <div>
-            <div style="font-weight: 800; font-size: 0.95rem;">${leadRating} / 5.0</div>
-            <div style="font-size: 0.75rem; color: #64748b;">Google Verified Reviews</div>
-          </div>
-        </div>
-        <div class="floating-card card-bottom">
-          <div style="font-size: 1.4rem;">⚡</div>
-          <div>
-            <div style="font-weight: 800; font-size: 0.95rem; color: ${brandPalette.accent};">Carga en 0.8s</div>
-            <div style="font-size: 0.75rem; color: #64748b;">100% Core Web Vitals</div>
-          </div>
-        </div>
-      </div>
-    </section>
-
-    <div class="trust-strip">
-      <div>🔒 Confidencialidad y Rigor</div>
-      <div>⚡ Respuesta en menos de 24 horas</div>
-      <div>📍 Sede en ${leadAddress}</div>
-      <div>💎 Atención Directa</div>
-    </div>
-
-    <section id="solucion" class="bento-section">
-      <div class="bento-grid">
-        <div class="bento-card">
-          <div class="bento-metric">0.8s</div>
-          <h3 style="font-size: 1.35rem; font-weight: 800; margin-bottom: 8px;">Experiencia Móvil Ultra Fluida</h3>
-          <p style="color: var(--text-muted);">Eliminamos la lentitud y fugas de clientes de la web anterior con navegación optimizada para llamadas y WhatsApp.</p>
-        </div>
-        <div class="bento-card">
-          <div class="bento-metric">+99%</div>
-          <h3 style="font-size: 1.35rem; font-weight: 800; margin-bottom: 8px;">Efectividad y Casos Resueltos</h3>
-          <p style="color: var(--text-muted);">Acompañamiento cercano y profesional adaptado a las necesidades de tu sector.</p>
-        </div>
-      </div>
-    </section>
-
-    <section id="servicios" class="bento-section">
-      <h2 style="font-size: 2rem; font-weight: 800; margin-bottom: 24px;">Servicios Destacados</h2>
-      <div class="services-grid">
-        <div class="service-card">
-          <img src="${catImages.service1}" referrerpolicy="no-referrer" onerror="this.onerror=null; this.src='${fallbackCat.service1}';" alt="Servicio 1" class="service-img">
-          <div class="service-content">
-            <h3 style="font-size: 1.2rem; font-weight: 800; margin-bottom: 8px;">Asesoramiento Estratégico</h3>
-            <p style="color: var(--text-muted); font-size: 0.92rem;">Atención especializada para empresas y particulares en ${leadAddress}.</p>
-          </div>
-        </div>
-        <div class="service-card">
-          <img src="${catImages.service2}" referrerpolicy="no-referrer" onerror="this.onerror=null; this.src='${fallbackCat.service2}';" alt="Servicio 2" class="service-img">
-          <div class="service-content">
-            <h3 style="font-size: 1.2rem; font-weight: 800; margin-bottom: 8px;">Gestión Operativa Integral</h3>
-            <p style="color: var(--text-muted); font-size: 0.92rem;">Resolución ágil de expedientes y trámites con total transparencia.</p>
-          </div>
-        </div>
-        <div class="service-card">
-          <img src="${catImages.service3}" referrerpolicy="no-referrer" onerror="this.onerror=null; this.src='${fallbackCat.service3}';" alt="Servicio 3" class="service-img">
-          <div class="service-content">
-            <h3 style="font-size: 1.2rem; font-weight: 800; margin-bottom: 8px;">Atención al Cliente Exclusiva</h3>
-            <p style="color: var(--text-muted); font-size: 0.92rem;">Canal directo para resolver dudas en tiempo récord.</p>
-          </div>
-        </div>
-      </div>
-    </section>
-
-    <section id="proceso" class="process-section">
-      <span class="section-badge">Metodología Ágil</span>
-      <h2 class="section-title">Tu proyecto en 4 sencillos pasos</h2>
-      <p class="section-subtitle">Un proceso claro, transparente y sin complicaciones desde el primer contacto con ${leadName}.</p>
-      <div class="process-grid">
-        <div class="process-card">
-          <div class="step-num">01</div>
-          <h3>Estudio Previo y Diagnóstico</h3>
-          <p>Evaluamos tus requerimientos específicos en ${leadAddress} y elaboramos una propuesta técnica y económica personalizada sin compromiso.</p>
-        </div>
-        <div class="process-card">
-          <div class="step-num">02</div>
-          <h3>Planificación y Trámites</h3>
-          <p>Gestionamos licencias, autorizaciones técnicas y subvenciones disponibles para que no tengas que preocuparte de nada.</p>
-        </div>
-        <div class="process-card">
-          <div class="step-num">03</div>
-          <h3>Ejecución de Alta Precisión</h3>
-          <p>Instalación o servicio realizado por técnicos cualificados con materiales de primera calidad en los plazos convenidos.</p>
-        </div>
-        <div class="process-card">
-          <div class="step-num">04</div>
-          <h3>Puesta a Punto y Garantía</h3>
-          <p>Comprobación rigurosa de funcionamiento, entrega formal y soporte continuo con garantía oficial respaldada.</p>
-        </div>
-      </div>
-    </section>
-
-    <section id="faq" class="faq-section">
-      <span class="section-badge">Resolución de Dudas</span>
-      <h2 class="section-title">Preguntas Frecuentes</h2>
-      <p class="section-subtitle">Todo lo que necesitas saber antes de comenzar con ${leadName}.</p>
-      <div class="faq-container">
-        <details class="faq-card" open>
-          <summary class="faq-question">
-            <span>¿Cuánto tiempo toma la realización del trabajo o instalación?</span>
-            <span class="faq-icon">+</span>
-          </summary>
-          <div class="faq-answer">
-            <p>Los plazos habituales de respuesta y estudio técnico son de 24 a 48 horas. La ejecución se coordina de forma ágil adaptándonos a tus horarios para evitar cualquier interrupción en tu rutina o negocio.</p>
-          </div>
-        </details>
-        <details class="faq-card">
-          <summary class="faq-question">
-            <span>¿Gestionáis las subvenciones, licencias o bonificaciones fiscales?</span>
-            <span class="faq-icon">+</span>
-          </summary>
-          <div class="faq-answer">
-            <p>Sí, tramitamos íntegramente la documentación requerida para bonificaciones locales, deducciones y ayudas autonómicas y europeas aplicables en ${leadAddress} para que obtengas el máximo beneficio.</p>
-          </div>
-        </details>
-        <details class="faq-card">
-          <summary class="faq-question">
-            <span>¿Qué garantías y soporte técnico se ofrecen?</span>
-            <span class="faq-icon">+</span>
-          </summary>
-          <div class="faq-answer">
-            <p>Todos nuestros proyectos cuentan con garantía oficial por escrito tanto en componentes como en mano de obra, además de un canal de soporte telefónico directo para cualquier consulta posterior.</p>
-          </div>
-        </details>
-        <details class="faq-card">
-          <summary class="faq-question">
-            <span>¿Tiene algún coste o compromiso solicitar un estudio inicial?</span>
-            <span class="faq-icon">+</span>
-          </summary>
-          <div class="faq-answer">
-            <p>No, la consulta inicial, valoración de viabilidad y presupuesto son totalmente gratuitos y sin ningún tipo de compromiso.</p>
-          </div>
-        </details>
-      </div>
-    </section>
-
-    <div id="contacto" class="cta-banner">
-      <h2 style="font-size: 2.2rem; font-weight: 900; margin-bottom: 12px;">Comienza hoy con ${leadName}</h2>
-      <p style="margin-bottom: 24px; font-size: 1.1rem; opacity: 0.9;">Contacta directamente para solicitar más información o pedir tu cita.</p>
-      <a href="tel:${leadPhone}" style="background: white; color: var(--primary); padding: 14px 30px; border-radius: 12px; font-weight: 800; text-decoration: none;">📞 Llamar al ${leadPhone}</a>
-    </div>
-  </main>
-
-  <footer class="footer">
-    <p><strong>${leadName}</strong> · ${leadAddress} · Teléfono: ${leadPhone}</p>
-    <p style="margin-top: 8px; font-size: 0.8rem; opacity: 0.7;">Rediseño basado en la identidad de marca de ${websiteUrl}</p>
-  </footer>
-</body>
-</html>
-`.trim();
+  return generateArchetypeHtml(
+    leadName,
+    websiteUrl,
+    brandPalette,
+    catImages,
+    fallbackCat,
+    archetype,
+    leadPhone,
+    leadAddress,
+    leadRating,
+    nicheOrMeta,
+    designTrend
+  );
 }
 
 class GoogleStitchWorkflow extends BaseWorkflowType {
@@ -2644,6 +2108,11 @@ class GoogleStitchWorkflow extends BaseWorkflowType {
       context.log(`🎨 Paleta corporativa real: ${brandPalette.name} (Primario: ${brandPalette.primary}, Acento: ${brandPalette.accent}). Arquetipo: ${archetype}.`);
       context.log(`📸 Identidad visual: Logo oficial del cliente: ${catImages.logo ? 'Detectado y verificado' : 'Fallback tipográfico estilizado'}. Fotografías y recursos visuales: Generados en alta resolución por Google AI.`);
 
+      // 2. Investigar referencias de tendencias de diseño web contemporáneas (Awwwards / Pinterest / Dribbble) adaptadas al nicho
+      context.log(`🔍 Investigando referencias de tendencias de diseño web para el sector de "${leadName}"...`);
+      const designTrend = await searchDesignTrendReferences(leadName, archetype, (lead as any).notes || meta?.niche || meta?.category, leadAddress);
+      context.log(`✨ Referencia de tendencia detectada: "${designTrend.trendTitle}" (${designTrend.source}).`);
+
       let generatedHtml = '';
       let generatedCss = '';
       let stitchProjectId = '';
@@ -2741,6 +2210,13 @@ Tu misión es diseñar un REDISEÑO WEB DE ALTÍSIMA GAMA, TOTALMENTE A LA VANGU
 
 ${archetypePrompt}
 
+✨ REFERENCIAS DE TENDENCIA DE DISEÑO WEB (AWWWARDS / PINTEREST / DRIBBBLE 2026):
+- Dirección Visual de Vanguardia: "${designTrend.trendTitle}" (${designTrend.source})
+- Elementos Clave de la Tendencia: ${designTrend.visualHighlights.join('; ')}
+- Componentes Esenciales del Sector: ${designTrend.keyComponents.join('; ')}
+- Tipografía Recomendada: Titulares "${designTrend.recommendedTypography.display}", Cuerpo "${designTrend.recommendedTypography.body}"
+${designTrend.searchSnippets?.length ? `- Inspiración en Tendencias Web Actuales: ${designTrend.searchSnippets.join(' | ')}` : ''}
+
 LÍNEA DE COLOR CORPORATIVA REAL (EXTRAÍDA DE SU WEB ORIGINAL "${websiteUrl}"):
 - Color Primario Corporativo: ${brandPalette.primary}
 - Color de Acento / Botones de Acción: ${brandPalette.accent}
@@ -2834,9 +2310,9 @@ FORMATO:
         }
       }
 
-      // Fallback de ultra-diseño con NAVBAR COMPLETO y arquetipo enriquecido si todos los modelos se agotan
+      // Fallback de ultra-diseño multi-arquetipo si todos los modelos se agotan
       if (!generatedHtml) {
-        generatedHtml = generateConceptualDesignHtml(leadName, websiteUrl, brandPalette, catImages, fallbackCat, archetype, leadPhone, leadAddress, leadRating);
+        generatedHtml = generateConceptualDesignHtml(leadName, websiteUrl, brandPalette, catImages, fallbackCat, archetype, leadPhone, leadAddress, leadRating, meta, designTrend);
       }
 
       // Aplicar guardrails maestros de maquetación y protección de activos
@@ -2861,6 +2337,13 @@ FORMATO:
         promptUsed: systemPrompt,
         brandPalette,
         layoutArchetype: archetype,
+        designTrend: {
+          title: designTrend.trendTitle,
+          source: designTrend.source,
+          highlights: designTrend.visualHighlights,
+          components: designTrend.keyComponents,
+          snippets: designTrend.searchSnippets || []
+        },
         scrapedAssets: {
           hasClientLogo: Boolean(catImages.logo),
           logo: catImages.logo,
@@ -2869,6 +2352,7 @@ FORMATO:
         previewImageUrl: mockupScreenshotUrl || (techAnalysis.screenshots && techAnalysis.screenshots[0]?.url) || null,
         features: [
           `Identidad cromática extraída de su web original (${brandPalette.primary} / ${brandPalette.accent})`,
+          `Tendencia de diseño web incorporada: ${designTrend.trendTitle} (${designTrend.source})`,
           catImages.logo ? 'Logotipo oficial de la empresa integrado' : 'Insignia tipográfica corporativa estilizada',
           'Recursos visuales y fotografía editorial de alta resolución generados por Google AI',
           `Arquetipo de diseño único: ${archetype}`,
