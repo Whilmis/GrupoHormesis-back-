@@ -176,10 +176,23 @@ export const workflowController = {
           console.error(`[workflowController] Error en background para WF ${id}:`, err);
         });
 
+        // Intentar obtener el ID de la ejecución en curso para seguimiento del frontend
+        let executionId: string | undefined;
+        try {
+          const activeExec = await prisma.workflowExecution.findFirst({
+            where: { userWorkflowId: id, status: 'running' },
+            orderBy: { startedAt: 'desc' },
+            select: { id: true }
+          });
+          executionId = activeExec?.id;
+        } catch (e) {}
+
         res.json({
-          message: 'El workflow se está ejecutando en segundo plano. Puedes revisar los avances en el panel.',
+          message: 'El workflow se está ejecutando en segundo plano. Puedes revisar los avances en vivo en el panel.',
           runningInBackground: true,
+          executionId,
           result: {
+            isRunningInBackground: true,
             message: 'El workflow se está ejecutando en segundo plano en el servidor. Los nuevos leads calificados se guardarán automáticamente en tu base de datos.',
             searchQuery: 'Ejecución en segundo plano',
             total_found: 0,
@@ -210,21 +223,49 @@ export const workflowController = {
     try {
       const { id } = req.params;
       
-      const formSubmissions = await prisma.formSubmission.findMany({
-        where: { workflowId: id },
-        orderBy: { createdAt: 'desc' },
-        take: 100,
-        include: {
-          referredBy: {
-            select: {
-              name: true
+      const [formSubmissions, workflowExecutions] = await Promise.all([
+        prisma.formSubmission.findMany({
+          where: { workflowId: id },
+          orderBy: { createdAt: 'desc' },
+          take: 50,
+          include: {
+            referredBy: {
+              select: {
+                name: true
+              }
             }
           }
-        }
+        }),
+        prisma.workflowExecution.findMany({
+          where: { userWorkflowId: id },
+          orderBy: { startedAt: 'desc' },
+          take: 25
+        })
+      ]);
+
+      const formattedForms = formSubmissions.map(f => ({ ...f, type: 'form' }));
+      const formattedExecs = workflowExecutions.map(e => ({
+        id: e.id,
+        userWorkflowId: e.userWorkflowId,
+        status: e.status,
+        resultData: e.resultData,
+        logs: e.logs,
+        startedAt: e.startedAt,
+        completedAt: e.completedAt,
+        createdAt: e.startedAt,
+        type: 'execution'
+      }));
+
+      // Unir y ordenar por fecha descendente
+      const all = [...formattedExecs, ...formattedForms].sort((a, b) => {
+        const dateA = new Date(a.createdAt || a.startedAt).getTime();
+        const dateB = new Date(b.createdAt || b.startedAt).getTime();
+        return dateB - dateA;
       });
 
-      res.json(formSubmissions.map(f => ({ ...f, type: 'form' })));
-    } catch (error) {
+      res.json(all);
+    } catch (error: any) {
+      console.error('Error obteniendo ejecuciones:', error);
       res.status(500).json({ error: 'Error obteniendo ejecuciones' });
     }
   },
