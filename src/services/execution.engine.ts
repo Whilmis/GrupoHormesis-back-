@@ -559,22 +559,36 @@ class AutoOutreachGoogleMapsWorkflow extends BaseWorkflowType {
       }
     }
 
-    // 4. Buscar leads
-    const leads = await prisma.lead.findMany({
+    // 4. Buscar leads en estado NUEVO con correo electrónico
+    const configuredBatch = config?.batchSize ? parseInt(config.batchSize, 10) : null;
+    const batchLimit = configuredBatch || (maxEmailsPerDay <= 10 ? 5 : Math.min(maxEmailsPerDay, 10));
+
+    const candidateLeads = await prisma.lead.findMany({
       where: {
         projectId: sourceWorkflow.projectId as string,
         status: 'NUEVO',
         email: { not: null }
       },
-      take: maxEmailsPerDay
+      orderBy: { createdAt: 'desc' },
+      take: 50
     });
 
-    if (leads.length === 0) {
+    if (candidateLeads.length === 0) {
       context.log('No hay leads nuevos con correo electrónico para contactar.');
       return { message: '0 leads contactados' };
     }
 
-    context.log(`Se encontraron ${leads.length} leads para contactar.`);
+    // Priorizar leads que YA tienen maqueta y GIF pre-computados para un despacho rápido y seguro
+    candidateLeads.sort((a, b) => {
+      const aMeta = (typeof a.metadata === 'object' && a.metadata) ? (a.metadata as any) : {};
+      const bMeta = (typeof b.metadata === 'object' && b.metadata) ? (b.metadata as any) : {};
+      const aReady = (aMeta.generatedMockup || aMeta.creativeAssets?.mockup?.previewHtml) ? 1 : 0;
+      const bReady = (bMeta.generatedMockup || bMeta.creativeAssets?.mockup?.previewHtml) ? 1 : 0;
+      return bReady - aReady;
+    });
+
+    const leads = candidateLeads.slice(0, batchLimit);
+    context.log(`Se seleccionaron ${leads.length} leads prioritarios para esta tanda (Límite por tanda: ${batchLimit} de ${maxEmailsPerDay} diarios).`);
 
     // 5. Configurar Nodemailer con IPv4 forzada y timeouts estrictos para Railway / Docker
     const transporter = nodemailer.createTransport({

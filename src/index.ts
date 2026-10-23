@@ -55,7 +55,7 @@ app.get('/api/health', async (req, res) => {
     const execCount = await prisma.workflowExecution.count();
     res.json({
       status: 'ok',
-      version: '1.0.10-docker',
+      version: '1.0.11-docker',
       execCount,
       dbHost: process.env.DATABASE_URL ? new URL(process.env.DATABASE_URL).host : 'none',
       chromium: process.env.PUPPETEER_EXECUTABLE_PATH || 'not_set',
@@ -64,7 +64,7 @@ app.get('/api/health', async (req, res) => {
   } catch (err: any) {
     res.status(500).json({
       status: 'db_error',
-      version: '1.0.10-docker',
+      version: '1.0.11-docker',
       error: err.message,
       timestamp: new Date().toISOString()
     });

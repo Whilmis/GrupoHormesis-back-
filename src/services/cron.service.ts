@@ -36,28 +36,32 @@ export class CronService {
     }
   }
 
-  static scheduleWorkflow(workflowId: string, cronExpression: string) {
+  static scheduleWorkflow(workflowId: string, cronExpression: string, timezone: string = 'Europe/Madrid') {
     if (scheduledJobs.has(workflowId)) {
       scheduledJobs.get(workflowId)?.stop();
       scheduledJobs.delete(workflowId);
     }
 
-    if (!cron.validate(cronExpression)) {
-      console.error(`[CronService] Cron inválido para WF ${workflowId}: ${cronExpression}`);
+    if (!cronExpression || !cron.validate(cronExpression)) {
+      if (cronExpression) {
+        console.error(`[CronService] Cron inválido para WF ${workflowId}: ${cronExpression}`);
+      }
       return;
     }
 
     const task = cron.schedule(cronExpression, async () => {
-      console.log(`[CronService] Ejecutando automático WF: ${workflowId}`);
+      console.log(`[CronService] [${new Date().toISOString()}] ⏰ Ejecutando automático WF: ${workflowId}`);
       try {
         await ExecutionEngine.executeWorkflow(workflowId);
       } catch (error) {
         console.error(`[CronService] Error ejecutando WF ${workflowId}:`, error);
       }
+    }, {
+      timezone
     });
 
     scheduledJobs.set(workflowId, task);
-    console.log(`[CronService] WF ${workflowId} programado con: ${cronExpression}`);
+    console.log(`[CronService] WF ${workflowId} programado con: "${cronExpression}" (Zona Horaria: ${timezone})`);
   }
 
   static stopWorkflow(workflowId: string) {

@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import prisma from '../config/db';
 import { CredentialService } from '../services/credential.service';
 import { ExecutionEngine } from '../services/execution.engine';
+import { CronService } from '../services/cron.service';
 
 
 
@@ -56,7 +57,7 @@ export const workflowController = {
   async updateUserWorkflow(req: Request, res: Response) {
     try {
       const { id } = req.params;
-      const { config, name, credentialIds, projectId } = req.body;
+      const { config, name, credentialIds, projectId, isActive } = req.body;
       const userId = (req as any).user.id;
 
       const existing = await prisma.userWorkflow.findFirst({
@@ -84,12 +85,22 @@ export const workflowController = {
         where: { id },
         data: { 
           name: name !== undefined ? name : undefined,
+          isActive: isActive !== undefined ? isActive : undefined,
           config: config !== undefined ? mergedConfig : undefined,
           projectId: projectId !== undefined ? (projectId || null) : undefined,
           credentials: credentialIds ? { set: credentialIds.map((credId: string) => ({ id: credId })) } : undefined
         },
         include: { credentials: true }
       });
+
+      // Actualizar reactivamente el scheduler de CronService
+      const scheduleExpr = (workflow.config as any)?.schedule;
+      if (workflow.isActive && scheduleExpr) {
+        CronService.scheduleWorkflow(workflow.id, scheduleExpr);
+      } else {
+        CronService.stopWorkflow(workflow.id);
+      }
+
       res.json(workflow);
     } catch (error) {
       console.error(error);
@@ -109,6 +120,8 @@ export const workflowController = {
       if (!workflow) {
         return res.status(404).json({ error: 'Workflow no encontrado' });
       }
+
+      CronService.stopWorkflow(id);
 
       await prisma.userWorkflow.delete({
         where: { id }
