@@ -156,21 +156,21 @@ export const workflowController = {
     const { id } = req.params;
     console.log(`[workflowController] === executeWorkflow START for ID: ${id} ===`);
     try {
-      // Race de seguridad de 25s: Si un workflow con muchas tareas toma más tiempo,
+      // Race de seguridad de 35s: Si un workflow con muchas tareas toma más tiempo,
       // respondemos 200 con ejecución en segundo plano para evitar que el proxy de Railway (60s)
       // corte la conexión con 502 Bad Gateway y bloqueos de CORS.
       const executionPromise = ExecutionEngine.executeWorkflow(id);
-      const timeoutPromise = new Promise<{ isTimeout: true }>((resolve) => {
-        setTimeout(() => resolve({ isTimeout: true }), 12000);
+      const timeoutPromise = new Promise<{ isTimeout: true; result?: undefined }>((resolve) => {
+        setTimeout(() => resolve({ isTimeout: true }), 35000);
       });
 
       const outcome = await Promise.race([
-        executionPromise.then(result => ({ isTimeout: false, result })),
+        executionPromise.then(result => ({ isTimeout: false as const, result })),
         timeoutPromise
       ]);
 
       if (outcome.isTimeout) {
-        console.log(`[workflowController] Workflow ID ${id} supera los 25s. Respondiendo 200 en segundo plano.`);
+        console.log(`[workflowController] Workflow ID ${id} supera los 35s. Respondiendo 200 en segundo plano.`);
         // Asegurar que errores en background no queden sin atrapar
         executionPromise.catch(err => {
           console.error(`[workflowController] Error en background para WF ${id}:`, err);
@@ -178,13 +178,28 @@ export const workflowController = {
 
         res.json({
           message: 'El workflow se está ejecutando en segundo plano. Puedes revisar los avances en el panel.',
-          runningInBackground: true
+          runningInBackground: true,
+          result: {
+            message: 'El workflow se está ejecutando en segundo plano en el servidor. Los nuevos leads calificados se guardarán automáticamente en tu base de datos.',
+            searchQuery: 'Ejecución en segundo plano',
+            total_found: 0,
+            audited_leads: 0,
+            leads: []
+          }
         });
         return;
       }
 
       console.log(`[workflowController] === executeWorkflow SUCCESS for ID: ${id} ===`);
-      res.json({ message: 'Ejecucion completada', result: outcome.result });
+      res.json({
+        message: 'Ejecucion completada',
+        result: outcome.result || {
+          message: 'Ejecución completada',
+          total_found: 0,
+          audited_leads: 0,
+          leads: []
+        }
+      });
     } catch (error: any) {
       console.error(`[workflowController] === executeWorkflow ERROR for ID: ${id}:`, error);
       res.status(500).json({ error: error.message || 'Error en ejecucion' });

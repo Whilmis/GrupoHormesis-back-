@@ -440,9 +440,13 @@ class LeadCollectorWorkflow extends BaseWorkflowType {
 
       detailedLeads.push(lead);
 
-      // Si tiene web real, califica para ser auditado (hasta 5 para no exceder cuotas de visión)
+      // Si tiene web real, califica para ser auditado (hasta 5 para no exceder cuotas de visión y acelerar la respuesta)
       if (lead.website && lead.website.startsWith('http') && validLeadsToAudit.length < 5) {
         validLeadsToAudit.push(lead);
+        if (validLeadsToAudit.length >= 5) {
+          context.log(`Se alcanzaron los 5 leads válidos con sitio web requeridos para esta tanda. Finalizando búsqueda preliminar.`);
+          break;
+        }
       }
     }
 
