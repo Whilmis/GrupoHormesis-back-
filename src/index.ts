@@ -44,10 +44,11 @@ app.use(cors({
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'Origin'],
+  maxAge: 86400,
   optionsSuccessStatus: 200
 }));
 
-app.use(express.json());
+app.use(express.json({ type: ['application/json', 'text/plain'] }));
 
 // Health check
 app.get('/api/health', async (req, res) => {
