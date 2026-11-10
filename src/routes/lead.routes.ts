@@ -2,18 +2,78 @@ import { Router } from 'express';
 import { getLeadActivities, createLeadActivity, getColaboradorLeads, updateLeadStatus } from '../controllers/lead.controller';
 import { requireAuth } from '../middlewares/auth.middleware';
 import prisma from '../config/db';
-import { extractBrandAssets, generateConceptualDesignHtml, sanitizeAndGuardMockupHtml } from '../services/execution.engine';
+import { extractBrandAssets, generateConceptualDesignHtml, sanitizeAndGuardMockupHtml, getFrontendUrl } from '../services/execution.engine';
 import { getDesignTrendKnowledge } from '../services/design-trends.service';
 
 const router = Router();
 
-// RUTA PÚBLICA PARA VER MAQUETA EN PANTALLA COMPLETA (CERO 404s)
-router.get('/public/:leadId/mockup', async (req, res) => {
+// RUTA PÚBLICA LIGERA PARA PRE-RELLENAR NOMBRE/CORREO Y RESOLVER CALENDARIO (SIN JWT EN URL)
+router.get('/public/:leadId/summary', async (req, res) => {
   try {
     const { leadId } = req.params;
     const lead = await prisma.lead.findUnique({
       where: { id: leadId },
-      select: { id: true, businessName: true, website: true, phone: true, contactName: true, metadata: true }
+      select: {
+        id: true,
+        businessName: true,
+        contactName: true,
+        email: true,
+        website: true,
+        project: {
+          select: { userId: true }
+        }
+      }
+    });
+
+    if (!lead) {
+      return res.status(404).json({ error: 'Lead no encontrado' });
+    }
+
+    let calendarId: string | null = null;
+    if (lead.project?.userId) {
+      const userCal = await prisma.calendar.findFirst({
+        where: { userId: lead.project.userId },
+        select: { id: true }
+      });
+      calendarId = userCal?.id || null;
+    }
+    if (!calendarId) {
+      const anyCal = await prisma.calendar.findFirst({ select: { id: true } });
+      calendarId = anyCal?.id || null;
+    }
+
+    return res.json({
+      id: lead.id,
+      businessName: lead.businessName || lead.contactName || 'Empresa',
+      contactName: lead.contactName,
+      email: lead.email || '',
+      website: lead.website || '',
+      calendarId
+    });
+  } catch (err: any) {
+    return res.status(500).json({ error: 'Error cargando resumen de lead' });
+  }
+});
+
+// RUTA PÚBLICA PARA VER MAQUETA EN PANTALLA COMPLETA (CERO 404s + TRACKING DE APERTURA)
+router.get('/public/:leadId/mockup', async (req, res) => {
+  try {
+    const { leadId } = req.params;
+    const isEmbed = req.query.embed === '1';
+    const userAgent = (req.headers['user-agent'] || '').toLowerCase();
+    const isBotOrScreenshot = userAgent.includes('headless') || userAgent.includes('puppeteer') || req.query.internal === '1';
+
+    const lead = await prisma.lead.findUnique({
+      where: { id: leadId },
+      select: {
+        id: true,
+        businessName: true,
+        website: true,
+        phone: true,
+        contactName: true,
+        metadata: true,
+        project: { select: { userId: true } }
+      }
     });
 
     if (!lead) {
@@ -77,13 +137,40 @@ router.get('/public/:leadId/mockup', async (req, res) => {
       `);
     }
 
+    // Registrar actividad en el CRM cuando el cliente real abre su propuesta
+    if (!isBotOrScreenshot) {
+      try {
+        const tenMinAgo = new Date(Date.now() - 10 * 60 * 1000);
+        const recentView = await prisma.activity.findFirst({
+          where: {
+            leadId: lead.id,
+            type: 'MOCKUP_VIEWED',
+            createdAt: { gte: tenMinAgo }
+          }
+        });
+        if (!recentView) {
+          await prisma.activity.create({
+            data: {
+              leadId: lead.id,
+              type: 'MOCKUP_VIEWED',
+              title: '👁️ El cliente abrió la propuesta de diseño',
+              description: `El prospecto visualizó la maqueta interactiva de ${lead.businessName || 'su empresa'}.`
+            }
+          });
+        }
+      } catch (actErr) {
+        // No bloquear renderizado si falla el log de actividad
+      }
+    }
+
     const meta = typeof lead.metadata === 'string' ? JSON.parse(lead.metadata) : (lead.metadata || {});
     let html = meta.generatedMockup || meta.creativeAssets?.mockup?.previewHtml;
 
+    const leadName = lead.businessName || lead.contactName || 'Empresa';
+    const brandAssets = await extractBrandAssets(lead.website || '', leadName, lead.id, '', meta);
+
     if (!html) {
       try {
-        const leadName = lead.businessName || lead.contactName || 'Empresa';
-        const brandAssets = await extractBrandAssets(lead.website || '', leadName, lead.id, '', meta);
         const designTrend = getDesignTrendKnowledge((lead as any).notes || meta?.niche || meta?.category || leadName, brandAssets.layoutArchetype);
         const rawHtml = generateConceptualDesignHtml(
           leadName,
@@ -107,6 +194,43 @@ router.get('/public/:leadId/mockup', async (req, res) => {
         });
       } catch (genErr: any) {
         return res.status(500).send('Error generando maqueta: ' + genErr.message);
+      }
+    } else {
+      // Asegurar que cualquier HTML previamente guardado pase por los nuevos guardrails anti-desbordamiento y contraste
+      html = sanitizeAndGuardMockupHtml(html, leadName, brandAssets.palette, brandAssets.images, brandAssets.fallbackImages, lead.website || '');
+    }
+
+    // Si el cliente accede directamente sin el iframe de PublicProposal, inyectar barra flotante de conversión con botón de Agendar Reunión
+    if (!isEmbed && !isBotOrScreenshot) {
+      let calendarId: string | null = null;
+      if (lead.project?.userId) {
+        const cal = await prisma.calendar.findFirst({ where: { userId: lead.project.userId }, select: { id: true } });
+        calendarId = cal?.id || null;
+      }
+      if (!calendarId) {
+        const anyCal = await prisma.calendar.findFirst({ select: { id: true } });
+        calendarId = anyCal?.id || null;
+      }
+      const frontendUrl = getFrontendUrl();
+      const bookingUrl = calendarId
+        ? `${frontendUrl}/book/${calendarId}?ref=${lead.id}`
+        : `${frontendUrl}/contacto`;
+
+      const conversionBarHtml = `
+      <div id="hormesis-conversion-bar" style="position:fixed; bottom:18px; left:50%; transform:translateX(-50%); background:rgba(15,23,42,0.96); backdrop-filter:blur(14px); color:#ffffff; padding:12px 20px; border-radius:9999px; box-shadow:0 20px 40px rgba(0,0,0,0.45); border:1px solid rgba(16,185,129,0.4); z-index:99999; display:flex; align-items:center; gap:16px; font-family:system-ui,-apple-system,sans-serif; max-width:94vw; flex-wrap:wrap; justify-content:center;">
+        <div style="display:flex; align-items:center; gap:8px; font-size:13px;">
+          <span style="background:rgba(16,185,129,0.2); color:#34d399; padding:3px 10px; border-radius:9999px; font-weight:700; font-size:11px; text-transform:uppercase;">Grupo Hormesis</span>
+          <span style="color:#e2e8f0; font-weight:600;">¿Te gusta esta línea de diseño para <strong>${leadName}</strong>?</span>
+        </div>
+        <a href="${bookingUrl}" target="_blank" rel="noopener noreferrer" style="background:#10b981; color:#ffffff; padding:9px 20px; border-radius:9999px; font-weight:700; font-size:13px; text-decoration:none; box-shadow:0 4px 14px rgba(16,185,129,0.4); white-space:nowrap;">
+          📅 Agendar Reunión (15 min)
+        </a>
+      </div>`;
+
+      if (html.includes('</body>')) {
+        html = html.replace('</body>', `${conversionBarHtml}\n</body>`);
+      } else {
+        html += conversionBarHtml;
       }
     }
 

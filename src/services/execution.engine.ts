@@ -34,16 +34,9 @@ async function generateMagicLink(leadId: string, calendarId: string): Promise<st
     where: { id: leadId }
   });
   if (lead && calendarId) {
-    const token = jwt.sign(
-      { 
-        leadId: lead.id, 
-        name: lead.businessName || 'Invitado', 
-        email: lead.email 
-      },
-      process.env.JWT_SECRET || 'tu_secreto_super_seguro_aqui_123!'
-    );
     const frontendUrl = getFrontendUrl();
-    return `${frontendUrl}/book/${calendarId}?token=${token}`;
+    // Usar URL limpia con ?ref= sin tokens JWT largos para evitar bloqueos de filtros anti-phishing
+    return `${frontendUrl}/book/${calendarId}?ref=${lead.id}`;
   }
   return null;
 }
@@ -680,12 +673,8 @@ class AutoOutreachGoogleMapsWorkflow extends BaseWorkflowType {
         }
       }
 
-      // Enlace para ver la maqueta en pantalla completa (con fallback query params resilientes)
-      const qParams = new URLSearchParams();
-      if (lead.businessName) qParams.set('name', lead.businessName);
-      if (lead.website) qParams.set('web', lead.website);
-      const qStr = qParams.toString() ? `?${qParams.toString()}` : '';
-      const fullScreenMockupUrl = `${backendUrl}/api/leads/public/${lead.id}/mockup${qStr}`;
+      // Enlace limpio bajo el dominio oficial del frontend para evitar alertas de seguridad en navegadores
+      const fullScreenMockupUrl = `${frontendUrl}/propuesta/${lead.id}`;
 
       // 7. Generar GIF Animado Antes vs Después para este lead (Composición enmarcada con Captura Real de la Propuesta)
       let proposalScreenshotUrl = meta?.mockupScreenshotUrl || meta?.creativeAssets?.mockup?.previewImageUrl;
@@ -912,36 +901,14 @@ class AutoOutreachGoogleMapsWorkflow extends BaseWorkflowType {
         ? replaceVariables(emailTemplate.subject)
         : `Propuesta de rediseño web y auditoría para ${clientName}`;
 
-      // 14. Plantilla estructurada para el botón 'Responder' (facilita al cliente detallar problemas y servicios de interés)
-      const replySubject = encodeURIComponent(`Interés en propuesta y soluciones - ${clientName}`);
-      const replyBodyTemplate = 
-`Hola equipo de Grupo Hormesis,
-
-He revisado la auditoría y propuesta visual para ${clientName}. Nos gustaría avanzar y comentarles nuestra situación:
-
-1. PROBLEMAS O RETOS QUE NOS GUSTARÍA RESOLVER EN NUESTRO NEGOCIO:
-- [Describe aquí brevemente tus principales problemas en la web actual, cuellos de botella o tareas manuales]
-
-2. SERVICIOS O ÁREAS QUE NOS GUSTARÍA CONOCER MÁS:
-(Marca con una X las opciones de tu interés)
-[ ] Rediseño web moderno y optimización de conversión (CRO)
-[ ] Automatización de tareas repetitivas y flujos de trabajo con IA
-[ ] Agendamiento de citas / reservas online automatizadas
-[ ] Cualificación y captación automática de clientes (CRM / Chatbots)
-[ ] Optimización de velocidad, SEO y resolución de fallos técnicos
-
-3. AGENDAR REUNIÓN (CALENDARIO ONLINE):
-(Para elegir el día y hora de la videollamada de 15 min, por favor pulsa directamente el botón 'Agendar Reunión' en el correo para ver los horarios disponibles en nuestro calendario interactivo en tiempo real)
-
-4. COMENTARIOS ADICIONALES:
-- [Escribe aquí cualquier contexto o duda adicional que quieras comentarnos antes de la sesión]
-
----
-Nombre de contacto: [Tu Nombre]
-Empresa: ${clientName}
-Teléfono: ${lead.phone || '[Tu Teléfono]'}`;
+      // 14. Plantilla ágil y sin fricción para el botón 'Responder' (1 línea fácil de enviar)
+      const replySubject = encodeURIComponent(`Re: Propuesta web para ${clientName}`);
+      const replyBodyTemplate = `Hola equipo de Grupo Hormesis,\n\nHe visto la propuesta de diseño y el diagnóstico para ${clientName}. Me gustaría comentarlo brevemente.\n\nUn saludo,\n${clientName}\nTel: ${lead.phone || ''}`;
 
       const replyMailtoUrl = `mailto:${gmailAddress}?subject=${replySubject}&body=${encodeURIComponent(replyBodyTemplate)}`;
+
+      // Versión en texto plano para máxima entregabilidad (evita carpeta de Spam/Promociones)
+      const plainTextBody = `Hola, equipo de ${clientName}:\n\nEstuvimos analizando su sitio web (${lead.website || ''}) y preparamos una propuesta visual de rediseño junto con un diagnóstico rápido de conversión.\n\nVer propuesta interactiva en pantalla completa:\n${fullScreenMockupUrl}\n\nAgendar una breve videollamada de 15 minutos:\n${magicLink}\n\nSi prefieren que les enviemos más detalles por aquí, basta con responder directamente a este correo.\n\nUn saludo cordial,\nEquipo de Grupo Hormesis\nhttps://grupohormesis.es`;
 
       // 15. Plantilla Maestra Unificada (Single-Card Flow con GIF Above-The-Fold y 2 Botones Finales)
       let clientBody = `
@@ -1036,9 +1003,10 @@ Teléfono: ${lead.phone || '[Tu Teléfono]'}`;
 
       try {
         await transporter.sendMail({
-          from: gmailAddress,
+          from: `"Grupo Hormesis" <${gmailAddress}>`,
           to: lead.email as string,
           subject: clientSubject,
+          text: plainTextBody,
           html: clientBody
         });
         
@@ -1330,8 +1298,11 @@ export async function extractBrandAssets(websiteUrl: string, businessName: strin
     } catch (err: any) {}
   }
 
-  // 3. Pre-validación rápida de accesibilidad del logo para evitar imágenes rotas
+  // 3. Pre-validación rápida de accesibilidad del logo y forzar HTTPS para evitar alertas de Mixed Content ("No es seguro")
   if (scrapedLogo) {
+    if (scrapedLogo.startsWith('http://')) {
+      scrapedLogo = scrapedLogo.replace(/^http:\/\//i, 'https://');
+    }
     const validLogo = await testImageUrl(scrapedLogo);
     if (!validLogo) scrapedLogo = null;
   }
@@ -1342,6 +1313,25 @@ export async function extractBrandAssets(websiteUrl: string, businessName: strin
     return Math.abs(h);
   }
   const seed = hashStr((businessName || '') + (websiteUrl || ''));
+
+  // Asegurar que los colores de botones y cabeceras tengan contraste suficiente con texto blanco (#ffffff)
+  function ensureContrastWithWhite(hex: string, maxBrightness = 155): string {
+    let clean = (hex || '#0f2744').replace('#', '');
+    if (clean.length === 3) clean = clean.split('').map(c => c + c).join('');
+    const num = parseInt(clean, 16);
+    if (isNaN(num)) return '#0f2744';
+    let r = (num >> 16) & 255;
+    let g = (num >> 8) & 255;
+    let b = num & 255;
+    const brightness = (r * 299 + g * 587 + b * 114) / 1000;
+    if (brightness > maxBrightness) {
+      const factor = maxBrightness / brightness;
+      r = Math.max(0, Math.round(r * factor));
+      g = Math.max(0, Math.round(g * factor));
+      b = Math.max(0, Math.round(b * factor));
+    }
+    return '#' + [r, g, b].map(x => x.toString(16).padStart(2, '0')).join('');
+  }
 
   // Determinación de Arquetipo de Diseño Pinterest/Dribbble
   const archetypes: Array<'editorial_magazine' | 'brutalist_minimal' | 'luxury_dark_split' | 'bento_tech'> = [
@@ -1364,17 +1354,18 @@ export async function extractBrandAssets(websiteUrl: string, businessName: strin
 
   if (foundHexes.length >= 2) {
     palette = {
-      primary: foundHexes[0],
-      accent: foundHexes[1],
+      primary: ensureContrastWithWhite(foundHexes[0], 140),
+      accent: ensureContrastWithWhite(foundHexes[1], 160),
       background: '#ffffff',
       surface: '#f8fafc',
       textColor: '#0f172a',
       name: `Línea de color corporativa real de ${websiteUrl} (${foundHexes.slice(0, 2).join(', ')})`
     };
   } else if (foundHexes.length === 1) {
+    const safePrimary = ensureContrastWithWhite(foundHexes[0], 140);
     palette = {
-      primary: foundHexes[0],
-      accent: generateHarmoniousAccent(foundHexes[0]),
+      primary: safePrimary,
+      accent: ensureContrastWithWhite(generateHarmoniousAccent(safePrimary), 160),
       background: '#ffffff',
       surface: '#f8fafc',
       textColor: '#0f172a',
@@ -1844,7 +1835,14 @@ export function sanitizeAndGuardMockupHtml(
     } catch (e) {}
   }
 
-  // 1. Inyectar Guardrails CSS para evitar cortes, desbordamientos y forzar línea de color
+  // 0. Eliminar degradados que tapan textos (-webkit-text-fill-color: transparent sin background-clip válido)
+  html = html
+    .replace(/-webkit-text-fill-color\s*:\s*transparent\s*;?/gi, '')
+    .replace(/text-fill-color\s*:\s*transparent\s*;?/gi, '')
+    .replace(/-webkit-background-clip\s*:\s*text\s*;?/gi, '')
+    .replace(/background-clip\s*:\s*text\s*;?/gi, '');
+
+  // 1. Inyectar Guardrails CSS para evitar cortes, desbordamientos, tamaños desproporcionados y degradados sobre texto
   const guardStyles = `
   <style id="hormesis-layout-and-brand-guardrails">
     /* Forzar variables de marca extraídas de la URL de base */
@@ -1864,49 +1862,72 @@ export function sanitizeAndGuardMockupHtml(
       max-width: 100% !important;
       overflow-x: hidden !important;
       min-height: 100% !important;
-      height: auto !important;
       margin: 0;
       padding: 0;
     }
 
-    /* Evitar que alturas fijas o 100vh corten secciones o tarjetas */
+    /* Contenedores principales contenidos en ancho pero respetando su diseño de grilla */
     section, header, footer, main, article,
     .hero, [class*="hero"], [class*="section"], [class*="container"], [class*="wrapper"] {
-      height: auto !important;
-      min-height: auto !important;
       max-width: 100% !important;
       overflow-wrap: break-word !important;
       word-break: break-word !important;
     }
 
-    /* Tarjetas y componentes flexibles sin desborde */
+    /* Tarjetas y componentes flexibles sin desborde ni textos tapados */
     .card, [class*="card"], [class*="box"], [class*="item"], [class*="service"], [class*="bento"] {
-      height: auto !important;
-      min-height: auto !important;
       overflow-wrap: break-word !important;
       word-break: break-word !important;
       max-width: 100% !important;
     }
 
-    /* Imágenes responsivas con preservación de proporciones */
-    img {
-      max-width: 100% !important;
+    /* Control estricto de tamaño de logos en cabeceras y navbars */
+    header img, nav img, .navbar img, [class*="nav"] img, [class*="logo"] img {
+      max-height: 48px !important;
+      max-width: 190px !important;
+      width: auto !important;
       height: auto !important;
-      display: inline-block;
+      object-fit: contain !important;
     }
-    img[class*="hero"], img[class*="main"], img[class*="service"], img[class*="banner"] {
+
+    /* Imágenes de contenido y tarjetas con proporciones controladas (nunca gigantes) */
+    main img, section img, .bento-img-card img, .arch-img-frame img, .holo-card img, .brutalist-img-box img {
+      max-width: 100% !important;
+      max-height: 480px !important;
       object-fit: cover !important;
+      display: block;
+    }
+    .service-lead-card img, .dark-service-card img, .service-brutal-card img, .item-img img, .card img, [class*="service"] img {
+      max-width: 100% !important;
+      max-height: 240px !important;
+      width: 100% !important;
+      object-fit: cover !important;
+    }
+    img[class*="avatar"], .avatar {
+      width: 48px !important;
+      height: 48px !important;
+      max-width: 48px !important;
+      max-height: 48px !important;
+      border-radius: 50% !important;
+      object-fit: cover !important;
+    }
+
+    /* Evitar que pseudo-elementos o capas de degradado cubran los titulares o párrafos */
+    h1, h2, h3, h4, h5, h6, p, a, button, .btn, [class*="btn"] {
+      position: relative;
+      z-index: 2;
+      overflow-wrap: break-word !important;
+      word-wrap: break-word !important;
+    }
+    h1[class*="glow"], .hero-glow-title {
+      background: none !important;
+      -webkit-text-fill-color: initial !important;
     }
 
     /* Tarjetas e insignias flotantes con margen seguro */
     [class*="floating"], [class*="badge"], [class*="pill"] {
       max-width: calc(100% - 24px) !important;
-    }
-
-    /* Textos y títulos siempre contenidos */
-    h1, h2, h3, h4, h5, h6, p, span, a {
-      overflow-wrap: break-word !important;
-      word-wrap: break-word !important;
+      z-index: 5;
     }
 
     /* Navbar fluido y sin cortes */
@@ -1925,9 +1946,9 @@ export function sanitizeAndGuardMockupHtml(
     html = `${guardStyles}\n${html}`;
   }
 
-  // 2. Proteger todas las etiquetas <img>: asegurar que no provengan de la web del cliente (excepto logo) y añadir onerror fallback
+  // 2. Proteger todas las etiquetas <img>: forzar HTTPS (evitar Mixed Content), asegurar que no provengan de la web del cliente (excepto logo) y añadir onerror fallback
   html = html.replace(/<img\b([^>]*)>/gi, (match, attrs) => {
-    let newAttrs = attrs;
+    let newAttrs = attrs.replace(/src=(["'])http:\/\//gi, 'src=$1https://');
 
     // Asegurar referrerpolicy="no-referrer"
     if (!/referrerpolicy=/i.test(newAttrs)) {
@@ -2077,7 +2098,7 @@ class GoogleStitchWorkflow extends BaseWorkflowType {
     let processedCount = 0;
 
     // Modelos activos de Gemini con fallback en cascada para evitar 429
-    const activeModels = ['gemini-3.5-flash', 'gemini-3.6-flash', 'gemini-flash-lite-latest'];
+    const activeModels = ['gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-flash-lite-latest'];
 
     for (const lead of leadsToProcess) {
       const leadName = lead.businessName || lead.contactName || 'Empresa';
@@ -2165,8 +2186,8 @@ class GoogleStitchWorkflow extends BaseWorkflowType {
 👑 ARQUETIPO OBLIGATORIO: "LUXURY DARK & AMBIENT NEON GLOW" (Tendencia Pinterest Dark Mode de Alto Standing)
 - COMPOSICIÓN DEL HERO (¡PROHIBIDO EL TÍPICO 2-COLUMNAS TEXTO/IMAGEN!):
   * Atmósfera Inmersiva Dark de Máxima Sofisticación:
-    1. Fondo Dark Profundo (#090d16 o #0b0f19) con auras de iluminación ambiental difusa (radial-gradient con ${brandPalette.primary} y ${brandPalette.accent} al 18% de opacidad).
-    2. Titular con texto degradado luminoso (background: linear-gradient(135deg, #ffffff 0%, ${brandPalette.accent} 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent;).
+    1. Fondo Dark Profundo (#090d16 o #0b0f19) con auras de iluminación ambiental sutil en el fondo (NUNCA sobre el texto).
+    2. Titular en color blanco puro (#ffffff) nítido y de alto contraste (¡PROHIBIDO usar background-clip: text o -webkit-text-fill-color: transparent!).
     3. Tarjeta de imagen Hero (${catImages.hero}) con Glassmorphism Neón (backdrop-filter: blur(20px); border: 1px solid rgba(255,255,255,0.15); box-shadow: 0 0 60px ${brandPalette.accent}33; border-radius: 28px;).
     4. Botones CTA con resplandor neón/luminoso (box-shadow: 0 0 25px ${brandPalette.accent}66;).
 - COMPOSICIÓN DE SECCIONES:

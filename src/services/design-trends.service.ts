@@ -1158,9 +1158,11 @@ function generateLuxuryDarkSplitHtml(
       font-weight: 900;
       line-height: 1.1;
       margin-bottom: 20px;
-      background: linear-gradient(135deg, #ffffff 40%, ${brandPalette.accent} 100%);
-      -webkit-background-clip: text;
-      -webkit-text-fill-color: transparent;
+      color: #ffffff;
+    }
+    .hero-glow-title span {
+      color: var(--primary-accent);
+      text-shadow: 0 0 28px ${brandPalette.accent}55;
     }
     .hero-desc {
       color: var(--text-muted);
@@ -1322,7 +1324,7 @@ function generateLuxuryDarkSplitHtml(
       <div class="neon-pill">
         ✨ Atmósfera de Alto Standing · ${trend.source}
       </div>
-      <h1 class="hero-glow-title">Distinción Absoluta en ${leadName}</h1>
+      <h1 class="hero-glow-title">Distinción Absoluta en <span>${leadName}</span></h1>
       <p class="hero-desc">
         Diseñado con la más avanzada tecnología visual inmersiva. Un ecosistema prémium para clientes exigentes en ${leadAddress}.
       </p>
@@ -1455,7 +1457,7 @@ function generateBrutalistMinimalHtml(
     }
     .brutalist-cta-btn {
       background: var(--primary-accent);
-      color: #0f172a;
+      color: #ffffff;
       border: 2.5px solid var(--border-dark);
       padding: 10px 22px;
       font-weight: 800;
@@ -1515,7 +1517,7 @@ function generateBrutalistMinimalHtml(
     }
     .btn-brutal-main {
       background: var(--primary-accent);
-      color: #0f172a;
+      color: #ffffff;
       border: 3px solid var(--border-dark);
       padding: 14px 30px;
       font-weight: 900;
