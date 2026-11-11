@@ -2429,14 +2429,26 @@ export function ensureExecutiveFormEmailHtml(
   replyMailto?: string
 ): string {
   const cleanBody = (rawBody || '').trim();
+  const isLegacyOutreachSnippet =
+    cleanBody.toLowerCase().includes('tras auditar') ||
+    cleanBody.toLowerCase().includes('línea de diseño conceptual') ||
+    cleanBody.toLowerCase().includes('linea de diseno conceptual');
+
   const hasFullCardLayout =
-    cleanBody.includes('#0f172a') &&
+    !isLegacyOutreachSnippet &&
+    cleanBody.includes('GRUPO HORMESIS') &&
     (cleanBody.includes('<a ') || cleanBody.includes('href=')) &&
     cleanBody.length > 900;
 
   if (hasFullCardLayout) {
     return cleanBody;
   }
+
+  const consultativeIntroHtml =
+    !cleanBody || isLegacyOutreachSnippet
+      ? `<p style='font-size: 15px; color: #334155; line-height: 1.7; margin: 0 0 14px 0;'>Hola <strong style='color: #0f172a;'>[Nombre]</strong>, hemos recibido tu solicitud de información sobre <strong style='color: #0f172a;'>${serviceName}</strong>. Nuestro equipo de consultoría e ingeniería ya ha revisado tu perfil para estructurar una solución adaptada a los objetivos de tu empresa.</p>
+      <p style='font-size: 15px; color: #334155; line-height: 1.7; margin: 0 0 18px 0;'>En <strong>Grupo Hormesis</strong> nos especializamos en transformar operaciones de negocio mediante arquitecturas de software a medida, inteligencia artificial aplicada y automatización estratégica enfocada al 100% en rentabilidad y retorno de inversión.</p>`
+      : cleanBody;
 
   const defaultMailtoBody = `Hola equipo de Grupo Hormesis,\n\nHe recibido su propuesta sobre ${serviceName} y me gustaría coordinar nuestra Llamada de Diagnóstico de 15 minutos.\n\nSaludos,\n[Nombre]`;
   const finalMailto =
@@ -2451,10 +2463,10 @@ export function ensureExecutiveFormEmailHtml(
   </div>
   <div style='padding: 28px;'>
     <div style='font-size: 15px; color: #334155; line-height: 1.7;'>
-      ${cleanBody}
+      ${consultativeIntroHtml}
     </div>
     <div style='background: #f8fafc; border-left: 4px solid #10b981; border-radius: 8px; padding: 18px 20px; margin: 24px 0;'>
-      <h3 style='margin: 0 0 10px 0; color: #0f172a; font-size: 15px; font-weight: 700;'>⚡ ¿Qué logramos al implementar esta solución en tu empresa?</h3>
+      <h3 style='margin: 0 0 10px 0; color: #0f172a; font-size: 15px; font-weight: 700;'>⚡ ¿Qué logramos al implementar nuestra solución de ${serviceName}?</h3>
       <ul style='margin: 0; padding-left: 18px; color: #475569; font-size: 14px; line-height: 1.65;'>
         <li style='margin-bottom: 6px;'><strong style='color: #0f172a;'>Arquitectura a Medida y Escalable:</strong> Diseñada específicamente para el flujo operativo de tu negocio, sin plantillas rígidas.</li>
         <li style='margin-bottom: 6px;'><strong style='color: #0f172a;'>Ahorro Operativo Inmediato:</strong> Automatización de tareas críticas y reducción de cuellos de botella desde las primeras semanas.</li>

@@ -25,6 +25,39 @@ export const workflowController = {
         where: { userId },
         include: { template: true, credentials: true }
       });
+
+      for (const wf of workflows) {
+        if (wf.template?.code === 'form_contact_handler' && wf.config && typeof wf.config === 'object') {
+          const cfg = wf.config as any;
+          if (cfg.generated_responses && typeof cfg.generated_responses === 'object') {
+            let needsUpgrade = false;
+            const upgradedResponses: Record<string, any> = { ...cfg.generated_responses };
+            for (const [srvKey, srvVal] of Object.entries(cfg.generated_responses)) {
+              const entry = (srvVal || {}) as any;
+              const oldBody = String(entry.body || '');
+              const oldSubject = String(entry.subject || '');
+              const newBody = ensureExecutiveFormEmailHtml(oldBody, srvKey, cfg.businessContext || '');
+              const isLegacySubject = !oldSubject || /idea r[aá]pida/i.test(oldSubject);
+              const newSubject = isLegacySubject
+                ? `Propuesta Estratégica y Hoja de Ruta: ${srvKey.toUpperCase()} | Grupo Hormesis`
+                : oldSubject;
+              if (newBody !== oldBody || newSubject !== oldSubject) {
+                upgradedResponses[srvKey] = { ...entry, subject: newSubject, body: newBody };
+                needsUpgrade = true;
+              }
+            }
+            if (needsUpgrade) {
+              const updatedConfig = { ...cfg, generated_responses: upgradedResponses };
+              (wf as any).config = updatedConfig;
+              await prisma.userWorkflow.update({
+                where: { id: wf.id },
+                data: { config: updatedConfig }
+              }).catch(() => {});
+            }
+          }
+        }
+      }
+
       res.json(workflows);
     } catch (error) {
       res.status(500).json({ error: 'Error obteniendo workflows del usuario' });
