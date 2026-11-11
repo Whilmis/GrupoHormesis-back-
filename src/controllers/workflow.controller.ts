@@ -154,12 +154,76 @@ export const workflowController = {
     const { id } = req.params;
     console.log(`[workflowController] === executeWorkflow START for ID: ${id} ===`);
     try {
-      // Race de seguridad de 35s: Si un workflow con muchas tareas toma más tiempo,
-      // respondemos 200 con ejecución en segundo plano para evitar que el proxy de Railway (60s)
-      // corte la conexión con 502 Bad Gateway y bloqueos de CORS.
+      const workflow = await prisma.userWorkflow.findUnique({
+        where: { id },
+        include: { template: true }
+      });
+      if (!workflow) return res.status(404).json({ error: 'Workflow no encontrado' });
+      if (!workflow.isActive) return res.status(400).json({ error: 'El workflow está inactivo' });
+
+      // 1. Evitar ejecuciones simultáneas del mismo workflow que sobrecarguen la RAM en Railway
+      const activeExec = await prisma.workflowExecution.findFirst({
+        where: {
+          userWorkflowId: id,
+          status: 'running',
+          startedAt: { gte: new Date(Date.now() - 3 * 60 * 1000) } // Menos de 3 minutos
+        },
+        orderBy: { startedAt: 'desc' },
+        select: { id: true, startedAt: true }
+      });
+
+      if (activeExec) {
+        console.log(`[workflowController] Workflow ${id} ya tiene una ejecución activa (${activeExec.id}). Conectando al frontend...`);
+        return res.json({
+          message: 'El workflow ya se está ejecutando en segundo plano.',
+          runningInBackground: true,
+          executionId: activeExec.id,
+          result: {
+            isRunningInBackground: true,
+            message: 'Ya hay una ejecución activa en curso. Mostrando progreso en tiempo real...',
+            leads: []
+          }
+        });
+      }
+
+      // 2. Si es un workflow pesado (Google Maps, Crawler Puppeteer o Outreach), responder de inmediato en segundo plano
+      const isHeavy = ['lead_collector', 'auto_outreach_google_maps', 'google_stitch_designer'].includes(
+        workflow.template?.typeIdentifier
+      );
+
+      if (isHeavy) {
+        console.log(`[workflowController] Iniciando workflow pesado (${workflow.template?.typeIdentifier}) en background para ID: ${id}`);
+        ExecutionEngine.executeWorkflow(id).catch(err => {
+          console.error(`[workflowController] Error en background para WF ${id}:`, err);
+        });
+
+        // Pequeño descanso de 300ms para asegurar que el registro 'running' esté listo en PostgreSQL
+        await new Promise(r => setTimeout(r, 300));
+        const newExec = await prisma.workflowExecution.findFirst({
+          where: { userWorkflowId: id },
+          orderBy: { startedAt: 'desc' },
+          select: { id: true }
+        });
+
+        return res.json({
+          message: 'El workflow se ha iniciado en segundo plano con éxito.',
+          runningInBackground: true,
+          executionId: newExec?.id,
+          result: {
+            isRunningInBackground: true,
+            message: 'Iniciando búsqueda de leads y auditoría web con IA en segundo plano...',
+            searchQuery: 'Recolector de leads en curso',
+            total_found: 0,
+            audited_leads: 0,
+            leads: []
+          }
+        });
+      }
+
+      // 3. Workflows ligeros (como form_contact_handler): ejecutar directamente con race de 25s
       const executionPromise = ExecutionEngine.executeWorkflow(id);
       const timeoutPromise = new Promise<{ isTimeout: true; result?: undefined }>((resolve) => {
-        setTimeout(() => resolve({ isTimeout: true }), 35000);
+        setTimeout(() => resolve({ isTimeout: true }), 25000);
       });
 
       const outcome = await Promise.race([
@@ -168,37 +232,20 @@ export const workflowController = {
       ]);
 
       if (outcome.isTimeout) {
-        console.log(`[workflowController] Workflow ID ${id} supera los 35s. Respondiendo 200 en segundo plano.`);
-        // Asegurar que errores en background no queden sin atrapar
+        console.log(`[workflowController] Workflow ID ${id} supera los 25s. Pasando a segundo plano.`);
         executionPromise.catch(err => {
           console.error(`[workflowController] Error en background para WF ${id}:`, err);
         });
 
-        // Intentar obtener el ID de la ejecución en curso para seguimiento del frontend
-        let executionId: string | undefined;
-        try {
-          const activeExec = await prisma.workflowExecution.findFirst({
-            where: { userWorkflowId: id, status: 'running' },
-            orderBy: { startedAt: 'desc' },
-            select: { id: true }
-          });
-          executionId = activeExec?.id;
-        } catch (e) {}
-
-        res.json({
-          message: 'El workflow se está ejecutando en segundo plano. Puedes revisar los avances en vivo en el panel.',
+        return res.json({
+          message: 'El workflow se está procesando en segundo plano.',
           runningInBackground: true,
-          executionId,
           result: {
             isRunningInBackground: true,
-            message: 'El workflow se está ejecutando en segundo plano en el servidor. Los nuevos leads calificados se guardarán automáticamente en tu base de datos.',
-            searchQuery: 'Ejecución en segundo plano',
-            total_found: 0,
-            audited_leads: 0,
+            message: 'El workflow continúa ejecutándose en el servidor.',
             leads: []
           }
         });
-        return;
       }
 
       console.log(`[workflowController] === executeWorkflow SUCCESS for ID: ${id} ===`);
