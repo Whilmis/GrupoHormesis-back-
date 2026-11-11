@@ -367,24 +367,10 @@ export const workflowController = {
   },
 
   async generateTemplates(req: Request, res: Response) {
-    const fs = require('fs');
-    const logFile = 'groq_debug.log';
-    const log = (msg: string) => {
-      console.log(msg);
-      fs.appendFileSync(logFile, new Date().toISOString() + ' LOG: ' + msg + '\n');
-    };
-    const err = (msg: string, detail: any = '') => {
-      console.error(msg, detail);
-      fs.appendFileSync(logFile, new Date().toISOString() + ' ERR: ' + msg + ' ' + (typeof detail === 'object' ? JSON.stringify(detail) : detail) + '\n');
-    };
+    const log = (msg: string) => console.log(`[generateTemplates] ${msg}`);
+    const err = (msg: string, detail: any = '') => console.error(`[generateTemplates] ${msg}`, detail);
 
-    log('=== INICIANDO GENERATE TEMPLATES ===');
-
-    res.setHeader('Content-Type', 'application/json');
-    res.flushHeaders();
-    const keepAliveInterval = setInterval(() => {
-      res.write(' ');
-    }, 10000);
+    log('=== INICIANDO GENERATE TEMPLATES (MODO RÁPIDO PARALELO) ===');
 
     try {
       const { business_context, services, groqCredentialId, brandVoice } = req.body;
@@ -397,181 +383,265 @@ export const workflowController = {
         }
       }
       if (!apiKeyToUse) {
-        clearInterval(keepAliveInterval);
-        err('Groq API Key no configurada.');
-        return res.status(400).end(JSON.stringify({ error: 'Groq API Key no configurada.' }));
+        const anyGroqCred = await prisma.credential.findFirst({ where: { userId, type: 'groq_api_key' } });
+        if (anyGroqCred) {
+          apiKeyToUse = CredentialService.decrypt(anyGroqCred.encrypted, anyGroqCred.iv);
+        }
       }
-      
-      const generatedResponses: Record<string, {subject: string, body: string}> = {};
-      const isOutreachMode = Boolean(brandVoice) || req.body.mode === 'outreach' || (Array.isArray(services) && services.length === 1 && services[0] === 'Propuesta de Negocios');
-      
-      for (const service of services) {
-        log(`Generando correo (${isOutreachMode ? 'Outreach' : 'Formulario Premium'}) para: ${service}...`);
-        
-        const mailtoBody = `Hola equipo de Grupo Hormesis,\n\nHe recibido su propuesta inicial sobre ${service} y me gustaría avanzar con la Llamada de Diagnóstico (15 min).\n\n- Principal reto o necesidad actual:\n[Escribe brevemente aquí...]\n\n- Mejor horario tentativo:\n[Indica día/hora o agenda directo en el enlace del correo]\n\nSaludos,\n[Nombre]`;
+      if (!apiKeyToUse) {
+        err('Groq API Key no configurada.');
+        return res.status(400).json({ error: 'Groq API Key no configurada.' });
+      }
+
+      const serviceList: string[] = Array.isArray(services)
+        ? services.map((s: any) => String(s).trim()).filter(Boolean)
+        : [];
+      const isOutreachMode =
+        Boolean(brandVoice) ||
+        req.body.mode === 'outreach' ||
+        (serviceList.length === 1 && serviceList[0] === 'Propuesta de Negocios');
+
+      const buildExecutiveHtmlFromStructured = (serviceName: string, data: any, mailtoHref: string): string => {
+        const badge = data?.badge || 'GRUPO HORMESIS · SOLUCIÓN ESPECIALIZADA';
+        const headline = data?.headline || `Propuesta Estratégica: ${serviceName}`;
+        const subtitle = data?.subtitle || 'Diagnóstico y hoja de ruta preparada para [Nombre]';
+        const p1 =
+          data?.introParagraph1 ||
+          `Hola <strong style='color: #0f172a;'>[Nombre]</strong>, hemos recibido tu solicitud sobre <strong style='color: #0f172a;'>${serviceName}</strong> y nuestro equipo de ingeniería ha analizado cómo estructurar una solución de alto impacto para tu negocio.`;
+        const p2 =
+          data?.introParagraph2 ||
+          `En Grupo Hormesis diseñamos e implementamos arquitecturas tecnológicas pensadas para eliminar fricciones operativas, acelerar tiempos de respuesta y multiplicar la rentabilidad de cada proceso.`;
+        const valueBoxTitle = data?.valueBoxTitle || `⚡ ¿Qué logramos con nuestra solución de ${serviceName}?`;
+        const benefits: Array<{ icon?: string; title?: string; desc?: string }> =
+          Array.isArray(data?.benefits) && data.benefits.length > 0
+            ? data.benefits
+            : [
+                {
+                  icon: '✅',
+                  title: 'Arquitectura 100% a Medida',
+                  desc: `Adaptamos cada flujo e integración de ${serviceName} a la operativa real de tu empresa.`
+                },
+                {
+                  icon: '⚡',
+                  title: 'Automatización y Ahorro Operativo',
+                  desc: 'Eliminamos tareas manuales repetitivas y cuellos de botella desde la primera semana.'
+                },
+                {
+                  icon: '📈',
+                  title: 'Enfoque Directo en Conversión y ROI',
+                  desc: 'Métricas claras de rendimiento, escalabilidad garantizada y retorno de inversión medible.'
+                }
+              ];
+        const steps: Array<{ title?: string; desc?: string }> =
+          Array.isArray(data?.steps) && data.steps.length > 0
+            ? data.steps
+            : [
+                {
+                  title: '1. Sesión de Diagnóstico (15 min)',
+                  desc: 'Evaluamos tu situación actual, objetivos de negocio y requerimientos técnicos.'
+                },
+                {
+                  title: '2. Diseño de Arquitectura y Propuesta',
+                  desc: 'Definimos el alcance exacto, cronograma de entregas y proyección de retorno.'
+                },
+                {
+                  title: '3. Implementación Ágil y Escalado',
+                  desc: 'Despliegue sin interrumpir tu operación actual y acompañamiento técnico continuo.'
+                }
+              ];
+        const guarantee =
+          data?.guarantee ||
+          'Confidencialidad absoluta, soporte directo de ingeniería y arquitectura diseñada para escalar.';
+
+        const benefitsHtml = benefits
+          .map(
+            (b) =>
+              `<div style='margin-bottom: 12px; padding-bottom: 12px; border-bottom: 1px solid #e2e8f0;'>
+                <div style='font-size: 14.5px; font-weight: 700; color: #0f172a; margin-bottom: 3px;'>${b.icon || '✅'} ${b.title || 'Beneficio Clave'}</div>
+                <div style='font-size: 13.5px; color: #475569; line-height: 1.55;'>${b.desc || ''}</div>
+              </div>`
+          )
+          .join('');
+
+        const stepsHtml = steps
+          .map(
+            (s) =>
+              `<div style='margin-bottom: 10px; font-size: 13.5px; color: #334155; line-height: 1.5;'>
+                <strong style='color: #0f172a;'>${s.title || 'Paso'}:</strong> ${s.desc || ''}
+              </div>`
+          )
+          .join('');
+
+        return `<div style='max-width: 640px; margin: 0 auto; font-family: -apple-system, BlinkMacSystemFont, Segoe UI, Inter, Helvetica, Arial, sans-serif; background: #ffffff; border-radius: 14px; overflow: hidden; border: 1px solid #e2e8f0; box-shadow: 0 12px 32px rgba(15, 23, 42, 0.08); color: #1e293b;'>
+  <div style='background: #0f172a; border-top: 4px solid #10b981; padding: 32px 28px;'>
+    <span style='display: inline-block; background: rgba(16, 185, 129, 0.18); color: #34d399; font-size: 11px; font-weight: 700; letter-spacing: 1.2px; text-transform: uppercase; padding: 5px 12px; border-radius: 9999px; border: 1px solid rgba(52, 211, 153, 0.3);'>${badge}</span>
+    <h1 style='color: #ffffff; font-size: 22px; font-weight: 800; margin: 14px 0 6px 0; line-height: 1.3;'>${headline}</h1>
+    <p style='color: #94a3b8; font-size: 14px; margin: 0; line-height: 1.5;'>${subtitle}</p>
+  </div>
+  <div style='padding: 28px;'>
+    <p style='font-size: 15px; color: #334155; line-height: 1.7; margin: 0 0 14px 0;'>${p1}</p>
+    <p style='font-size: 15px; color: #334155; line-height: 1.7; margin: 0 0 22px 0;'>${p2}</p>
+    <div style='background: #f8fafc; border-left: 4px solid #10b981; border-radius: 8px; padding: 20px 22px; margin: 24px 0;'>
+      <h3 style='margin: 0 0 14px 0; color: #0f172a; font-size: 16px; font-weight: 700;'>${valueBoxTitle}</h3>
+      ${benefitsHtml}
+    </div>
+    <div style='background: #ffffff; border: 1px solid #e2e8f0; border-radius: 10px; padding: 20px 22px; margin: 22px 0;'>
+      <h4 style='margin: 0 0 12px 0; color: #0f172a; font-size: 14px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px;'>📋 Hoja de Ruta de Implementación</h4>
+      ${stepsHtml}
+    </div>
+    <div style='background: #ecfdf5; border: 1px solid #a7f3d0; border-radius: 8px; padding: 14px 18px; color: #065f46; font-size: 13px; margin-bottom: 24px; line-height: 1.5;'>
+      🔒 <strong>Garantía Grupo Hormesis:</strong> ${guarantee}
+    </div>
+    <div style='text-align: center; padding: 24px 20px; background: #f8fafc; border-radius: 12px; border: 1px solid #e2e8f0;'>
+      <p style='margin: 0 0 16px 0; color: #0f172a; font-size: 15px; font-weight: 700;'>¿Evaluamos cómo aplicarlo a tu negocio en una sesión de 15 minutos?</p>
+      <a href='[Link_Calendario]' target='_blank' style='display: inline-block; background: #10b981; color: #ffffff; padding: 14px 26px; border-radius: 8px; font-weight: 700; font-size: 14px; text-decoration: none; margin: 6px; box-shadow: 0 4px 12px rgba(16, 185, 129, 0.3);'>📅 Agendar Llamada de Diagnóstico (15 min)</a>
+      <a href='${mailtoHref}' style='display: inline-block; background: #0f172a; color: #ffffff; padding: 13px 22px; border-radius: 8px; font-weight: 600; font-size: 13px; text-decoration: none; margin: 6px;'>✉️ Responder con Detalles por Correo</a>
+    </div>
+  </div>
+  <div style='background: #0f172a; padding: 20px 28px; text-align: center; border-top: 1px solid #1e293b;'>
+    <p style='margin: 0 0 4px 0; color: #f8fafc; font-size: 13px; font-weight: 700;'>Grupo Hormesis · Sistematización Empresarial e Inteligencia Artificial</p>
+    <p style='margin: 0; color: #94a3b8; font-size: 12px;'><a href='https://grupohormesis.es' style='color: #34d399; text-decoration: none; font-weight: 600;'>grupohormesis.es</a></p>
+  </div>
+</div>`;
+      };
+
+      const modelsCascade = ['llama-3.3-70b-versatile', 'openai/gpt-oss-120b', 'llama-3.1-8b-instant'];
+
+      const generateForSingleService = async (service: string, idx: number): Promise<[string, { subject: string; body: string }]> => {
+        const mailtoBody = `Hola equipo de Grupo Hormesis,\n\nHe recibido su propuesta inicial sobre ${service} y me gustaría avanzar con la Llamada de Diagnóstico (15 min).\n\n- Principal reto o necesidad actual:\n[Escribe brevemente aquí...]\n\nSaludos,\n[Nombre]`;
         const mailtoHref = `mailto:ventas@grupohormesis.com?subject=${encodeURIComponent('Diagnóstico de Proyecto - ' + service)}&body=${encodeURIComponent(mailtoBody)}`;
 
-        const prompt = isOutreachMode ? `
-Eres un Master Copywriter B2B y un Diseñador Experto de Emails en HTML.
-Tu objetivo es crear un "Cold Email" (correo en frío) ALTAMENTE efectivo y hermoso para ofrecer este servicio: "${service}".
-Contexto de la Empresa (Grupo Hormesis): 
-"${business_context}"
-
-REQUISITOS ESTRICTOS DE ESTRATEGIA B2B Y COPYWRITING:
-1. ASUNTO (SUBJECT): Debe ser MUY CORTO (4 a 7 palabras máximo), intrigante y casi informal. Evita sonar como un boletín comercial. (Ej: "Idea rápida para tu web", "Pregunta sobre tu arquitectura").
-2. EL GANCHO (HOOK): No te presentes con "Hola, somos la agencia X". Inicia aportando valor directo, explicando que tras auditar su sitio web actual, prepararon una línea de diseño conceptual y detectaron problemas técnicos habituales que frenan sus conversiones.
-3. ACLARACIÓN IMPORTANTE: Deja claro que la muestra visual generada NO es un producto final cerrado ni una plantilla rígida, sino una *dirección de diseño y punto de partida* que se adapta totalmente a su marca.
-4. PROBLEMAS TÉCNICOS Y SOLUCIONES DE VALOR: Menciona 2-3 problemas técnicos comunes que suelen sufrir los negocios de su sector.
-5. LONGITUD: El texto debe ser ágil, conciso y profesional (menos de 150 palabras).
-6. CTA (Call To Action): Si les interesa resolver cualquiera de estos puntos técnicos o explorar esa línea de diseño, invítalos a pulsar el botón para agendar un Meet de 15 minutos o responder directamente a este correo.
-
-REQUISITOS ESTRICTOS DE DISEÑO Y ESTRUCTURA (HTML):
-1. Usa un diseño premium, limpio y corporativo con estilos inline.
-2. OBLIGATORIO usar la línea de color de la marca: Azul Pizarra oscuro (#0f172a) y Verde Esmeralda (#10b981).
-3. NO INCLUYAS BOTONES NI PIES DE PÁGINA (CRÍTICO): La plantilla maestra del sistema se encarga de inyectar automáticamente la cabecera corporativa, el GIF animado interactivo, la auditoría y los botones finales. Genera únicamente el texto persuasivo editorial y las viñetas de valor.
-4. CRÍTICO PARA EL CÓDIGO HTML: Debes usar ÚNICAMENTE comillas simples (') para todos los atributos dentro de tus etiquetas HTML. NO uses comillas dobles internas porque romperán el JSON.
-5. Usa [Nombre] para referirte al cliente. EVITA usar llaves { } en el texto para no romper el formato JSON.
-
-Devuelve EXACTAMENTE Y SOLAMENTE un JSON válido con esta estructura (sin bloques markdown, solo llaves):
+        const prompt = isOutreachMode
+          ? `Eres un Master Copywriter B2B. Crea un Cold Email breve en HTML para ofrecer "${service}".
+Contexto de Grupo Hormesis: "${business_context}"
+Reglas:
+1. Asunto corto (4-7 palabras).
+2. Gancho directo sobre su web y una línea de diseño conceptual preparada para su negocio.
+3. Menciona 2-3 oportunidades técnicas clave.
+4. Usa comillas simples (') en atributos HTML y [Nombre] para el cliente.
+Devuelve SOLO un JSON válido:
 {
-  "subject": "Asunto magnético de 4-7 palabras",
-  "body": "<p style='font-size: 15px; color: #334155; margin-bottom: 12px;'>Gancho inicial...</p><ul style='color: #475569;'><li>...</li></ul>"
-}
-` : `
-Eres un Director de Consultoría B2B y Diseñador Senior de Emails HTML Ejecutivos.
-Un potencial cliente acaba de completar nuestro formulario web solicitando información sobre el servicio: "${service}".
-Contexto de nuestra empresa (Grupo Hormesis):
-"${business_context}"
+  "subject": "Asunto corto",
+  "body": "<p style='font-size: 15px; color: #334155; margin-bottom: 12px;'>...</p><ul style='color: #475569;'><li>...</li></ul>"
+}`
+          : `Eres un Director de Consultoría B2B de Grupo Hormesis.
+Un cliente potencial acaba de solicitar información en nuestro formulario web sobre el servicio: "${service}".
+Contexto de nuestra empresa (Grupo Hormesis): "${business_context}"
 
-Tu objetivo es crear una respuesta automática en HTML COMPLETA, EXTENSA, SOFISTICADA Y DE ALTA CONVERSIÓN para el servicio "${service}". NO hagas un correo simple ni corto; debe verse como una propuesta ejecutiva de primer nivel que genere máxima autoridad y confianza inmediata.
-
-ESTRUCTURA VISUAL Y DE CONTENIDO OBLIGATORIA (TODO CON ESTILOS INLINE):
-1. CONTENEDOR MAESTRO:
-   - Un contenedor principal con max-width: 640px, margin: 0 auto, font-family: 'Segoe UI', Inter, Helvetica, Arial, sans-serif, background: #ffffff, border-radius: 14px, overflow: hidden, border: 1px solid #e2e8f0, box-shadow: 0 12px 32px rgba(15, 23, 42, 0.08).
-2. CABECERA EJECUTIVA (HEADER):
-   - Fondo oscuro corporativo (#0f172a) con borde superior o acento en Verde Esmeralda (#10b981), padding: 32px 28px.
-   - Una insignia superior (badge) con fondo rgba(16, 185, 129, 0.18), texto #34d399, font-size: 11px, font-weight: 700, letter-spacing: 1.2px, text-transform: uppercase (ej: 'GRUPO HORMESIS · SOLUCIÓN ESPECIALIZADA').
-   - Un título H1 blanco (#ffffff, font-size: 23px, margin: 12px 0 6px 0) enfocado en transformar su área de "${service}".
-   - Un subtítulo en gris claro (#94a3b8, font-size: 14px) dando la bienvenida a [Nombre].
-3. APERTURA CONSULTIVA Y DIAGNÓSTICO DE DOLOR:
-   - Saludo personalizado a [Nombre] confirmando su solicitud sobre "${service}".
-   - 2 párrafos empáticos y estratégicos que demuestren profundo dominio técnico (conectando con el contexto de negocio y los cuellos de botella reales que enfrentan las empresas al intentar implementar "${service}" sin una arquitectura sólida).
-4. CAJA DE PROPUESTA DE VALOR Y ENTREGABLES CLAVE:
-   - Un bloque destacado (background: #f8fafc, border-left: 4px solid #10b981, border-radius: 8px, padding: 20px 22px, margin: 22px 0).
-   - Título de sección en #0f172a (font-size: 16px, font-weight: 700).
-   - 3 a 4 puntos de alto impacto con iconos (✅, ⚡, 📈, 🔒), donde cada punto tenga un título en negrita (#0f172a) y una explicación concreta del beneficio medible (ahorro de horas operativas, escalabilidad, precisión o retorno de inversión).
-5. HOJA DE RUTA DE IMPLEMENTACIÓN (3 PASOS):
-   - Una sección clara con fondo #ffffff, border: 1px solid #e2e8f0, border-radius: 10px, padding: 20px, margin: 22px 0, explicando qué ocurre a continuación:
-     * Paso 1: Llamada de Diagnóstico Técnico (15 min) para evaluar su caso actual.
-     * Paso 2: Diseño de Arquitectura y Propuesta a Medida con plazos y ROI claro.
-     * Paso 3: Implementación Ágil, Integración y Acompañamiento Continuo.
-6. SELLO DE GARANTÍA Y CONFIANZA:
-   - Una franja en verde suave (background: #ecfdf5, border: 1px solid #a7f3d0, border-radius: 8px, padding: 14px 18px, color: #065f46, font-size: 13px) destacando confidencialidad, arquitectura a medida y enfoque 100% en rentabilidad.
-7. SECCIÓN DE LLAMADA A LA ACCIÓN (CTA) CON 2 BOTONES:
-   - Un bloque centrado (text-align: center, margin: 28px 0 18px 0, padding: 24px, background: #f8fafc, border-radius: 12px, border: 1px solid #e2e8f0):
-     * Botón Principal (enlace a '[Link_Calendario]'): display: inline-block; background: #10b981; color: #ffffff; padding: 14px 28px; border-radius: 8px; font-weight: 700; font-size: 15px; text-decoration: none; margin: 6px; con el texto: '📅 Agendar Llamada de Diagnóstico (15 min)'
-     * Botón Secundario (enlace a '${mailtoHref}'): display: inline-block; background: #0f172a; color: #ffffff; padding: 12px 22px; border-radius: 8px; font-weight: 600; font-size: 13px; text-decoration: none; margin: 6px; con el texto: '✉️ Responder con Detalles por Correo'
-8. PIE DE PÁGINA CORPORATIVO (FOOTER):
-   - Fondo #0f172a o #f1f5f9, padding: 20px 28px, texto centrado con la firma del Equipo de Ingeniería y Consultoría de Grupo Hormesis y enlace a https://grupohormesis.es.
-
-REGLAS TÉCNICAS CRÍTICAS PARA EL JSON:
-- Usa ÚNICAMENTE comillas simples (') para TODOS los atributos HTML (style='...', href='...'). JAMÁS uses comillas dobles dentro del valor de "body".
-- Usa [Nombre] para el nombre del cliente y [Link_Calendario] para la URL del botón principal. NO uses llaves dobles en el HTML para no romper el JSON.
-- Devuelve ÚNICAMENTE un objeto JSON válido (sin bloques markdown):
+Redacta el contenido estratégico y altamente persuasivo para responderle sobre "${service}".
+Usa [Nombre] para referirte al cliente. NO uses comillas dobles internas que rompan el JSON.
+Devuelve ÚNICAMENTE un objeto JSON válido con esta estructura exacta:
 {
-  "subject": "Asunto ejecutivo, cercano y magnético sobre ${service}",
-  "body": "<div style='max-width: 640px; margin: 0 auto; ...'>...HTML completo aquí...</div>"
-}
-`;
-        let success = false;
-        let attempts = 0;
-        
-        while (!success && attempts < 5) {
-          attempts++;
+  "subject": "Asunto ejecutivo, cercano y de alto valor sobre ${service} (6-10 palabras)",
+  "badge": "GRUPO HORMESIS · SOLUCIÓN ESPECIALIZADA",
+  "headline": "Título ejecutivo potente enfocado en transformar su área de ${service}",
+  "subtitle": "Propuesta estratégica e información clave preparada para [Nombre]",
+  "introParagraph1": "Saludo cercano a [Nombre] confirmando su solicitud sobre ${service} y conectando con el principal dolor o reto que sufren las empresas en esta área.",
+  "introParagraph2": "Segundo párrafo consultivo explicando cómo Grupo Hormesis resuelve este reto combinando ingeniería a medida, IA y enfoque en rentabilidad.",
+  "valueBoxTitle": "⚡ Impacto directo al implementar nuestra solución de ${service}",
+  "benefits": [
+    { "icon": "✅", "title": "Título del beneficio 1 específico de ${service}", "desc": "Descripción persuasiva orientada a ROI y resultados medibles." },
+    { "icon": "⚡", "title": "Título del beneficio 2 específico de ${service}", "desc": "Descripción persuasiva sobre ahorro de tiempo y eliminación de fricciones." },
+    { "icon": "📈", "title": "Título del beneficio 3 específico de ${service}", "desc": "Descripción persuasiva sobre escalabilidad y ventaja competitiva." },
+    { "icon": "🔒", "title": "Título del beneficio 4 específico de ${service}", "desc": "Descripción persuasiva sobre robustez técnica y acompañamiento." }
+  ],
+  "steps": [
+    { "title": "1. Sesión de Diagnóstico Técnico (15 min)", "desc": "Analizamos tu caso actual y objetivos clave." },
+    { "title": "2. Arquitectura y Propuesta a Medida", "desc": "Entregamos el plan de implementación detallado con plazos y ROI." },
+    { "title": "3. Despliegue Ágil y Resultados", "desc": "Ejecución por fases con garantía técnica y soporte directo." }
+  ],
+  "guarantee": "Confidencialidad total, arquitectura escalable diseñada a medida y enfoque 100% en retorno de inversión."
+}`;
+
+        // Rotar el modelo inicial según el índice para repartir cuota de TPM en llamadas paralelas
+        const orderedModels = [
+          modelsCascade[idx % modelsCascade.length],
+          ...modelsCascade.filter((_, i) => i !== idx % modelsCascade.length)
+        ];
+
+        for (const modelName of orderedModels) {
           try {
-            log(`[${service}] Intento ${attempts}...`);
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 14000);
             const groqResponse = await fetch('https://api.groq.com/openai/v1/chat/completions', {
               method: 'POST',
+              signal: controller.signal,
               headers: {
-                'Authorization': `Bearer ${apiKeyToUse}`,
+                Authorization: `Bearer ${apiKeyToUse}`,
                 'Content-Type': 'application/json'
               },
               body: JSON.stringify({
-                model: 'openai/gpt-oss-120b',
+                model: modelName,
+                response_format: { type: 'json_object' },
                 messages: [
-                  { role: 'system', content: 'You are an elite HTML Email Designer and Copywriter that only responds in valid JSON. You must use single quotes for all HTML attributes to prevent JSON escaping errors. Do not use markdown blocks, just output the raw JSON.' },
+                  {
+                    role: 'system',
+                    content:
+                      'You are an elite B2B Consultant and Copywriter. Always respond with a valid JSON object matching the requested schema.'
+                  },
                   { role: 'user', content: prompt }
                 ],
                 temperature: 0.6,
-                max_tokens: 4000
+                max_tokens: 1800
               })
             });
+            clearTimeout(timeoutId);
 
             if (groqResponse.ok) {
               const aiData = await groqResponse.json();
-              const rawText = aiData.choices[0].message.content;
-              
+              const rawText = aiData.choices?.[0]?.message?.content || '';
               const match = rawText.match(/\{[\s\S]*\}/);
               if (match) {
-                try {
-                  const parsed = JSON.parse(match[0]);
-                  if (!isOutreachMode && parsed && typeof parsed.body === 'string') {
-                    parsed.body = ensureExecutiveFormEmailHtml(parsed.body, service, '[Link_Calendario]', mailtoHref);
-                  }
-                  generatedResponses[service] = parsed;
-                  log(`✅ ¡Éxito con ${service}!`);
-                  success = true;
-                } catch (parseError: any) {
-                  err(`❌ Intento ${attempts}: Error parseando JSON para ${service}. RAW TEXT: ${rawText}. ParseError: ${parseError.message}`);
+                const parsed = JSON.parse(match[0]);
+                if (isOutreachMode) {
+                  return [
+                    service,
+                    {
+                      subject: parsed.subject || `Idea rápida para tu proyecto de ${service}`,
+                      body: parsed.body || `<p>Hola [Nombre], hemos preparado una propuesta para ${service}.</p>`
+                    }
+                  ];
+                } else {
+                  const fullHtml = parsed.body
+                    ? ensureExecutiveFormEmailHtml(parsed.body, service, '[Link_Calendario]', mailtoHref)
+                    : buildExecutiveHtmlFromStructured(service, parsed, mailtoHref);
+                  return [
+                    service,
+                    {
+                      subject: parsed.subject || `Propuesta Estratégica de ${service} | Grupo Hormesis`,
+                      body: fullHtml
+                    }
+                  ];
                 }
-              } else {
-                err(`❌ Intento ${attempts}: La IA no devolvió JSON para ${service}`);
               }
             } else {
-              const errStatus = groqResponse.status;
-              const errorText = await groqResponse.text();
-              
-              if (errStatus === 429) {
-                let waitMs = 20000; 
-                const timeMatch = errorText.match(/try again in ([\d.]+)s/);
-                if (timeMatch && timeMatch[1]) {
-                  waitMs = Math.ceil(parseFloat(timeMatch[1]) * 1000) + 2000; 
-                }
-                if (waitMs > 60000) {
-                   err(`⚠️ Rate limit MUY ALTO (${waitMs/1000}s). Abortando este servicio.`);
-                   break;
-                }
-                log(`⚠️ Rate limit (429). Esperando ${waitMs / 1000}s...`);
-                await new Promise(resolve => setTimeout(resolve, waitMs));
-              } else if (errStatus >= 500) {
-                log(`⚠️ Error del servidor Groq (${errStatus}). Reintentando en 5s...`);
-                await new Promise(resolve => setTimeout(resolve, 5000));
-              } else {
-                err(`❌ Falló la API de Groq para ${service} con status ${errStatus}:`, errorText);
-                break; 
-              }
+              log(`[${service}] Modelo ${modelName} respondió status ${groqResponse.status}. Probando siguiente modelo...`);
             }
-          } catch (error: any) {
-            err(`❌ Error de red/fetch con ${service}:`, error.message);
-            await new Promise(resolve => setTimeout(resolve, 5000));
+          } catch (e: any) {
+            log(`[${service}] Aviso en modelo ${modelName}: ${e.message}`);
           }
         }
-        
-        log(`⏱️ Descansando 3s antes del siguiente servicio...`);
-        await new Promise(resolve => setTimeout(resolve, 3000));
-      }
-      
-      clearInterval(keepAliveInterval);
-      const finalJson = JSON.stringify(generatedResponses);
-      log(`=== FIN. Enviando JSON de tamaño: ${finalJson.length} bytes ===`);
-      res.end(finalJson);
+
+        // Fallback inmediato de alta calidad si todos los modelos están saturados
+        log(`[${service}] Usando plantilla ejecutiva estructurada de respaldo.`);
+        return [
+          service,
+          {
+            subject: `Propuesta Estratégica: ${service} para tu empresa | Grupo Hormesis`,
+            body: buildExecutiveHtmlFromStructured(service, {}, mailtoHref)
+          }
+        ];
+      };
+
+      const entries = await Promise.all(serviceList.map((srv, idx) => generateForSingleService(srv, idx)));
+      const generatedResponses: Record<string, { subject: string; body: string }> = Object.fromEntries(entries);
+
+      log(`=== FIN. Generadas ${entries.length} plantillas ejecutivas con éxito ===`);
+      return res.json(generatedResponses);
     } catch (error: any) {
       err('Error Fatal Catch:', error.message);
-      clearInterval(keepAliveInterval);
       if (!res.headersSent) {
-        res.status(500).end(JSON.stringify({ error: 'Error generando plantillas' }));
-      } else {
-        res.end(JSON.stringify({ error: 'Error interno generando plantillas' }));
+        return res.status(500).json({ error: 'Error generando plantillas: ' + error.message });
       }
     }
   },
@@ -590,90 +660,179 @@ REGLAS TÉCNICAS CRÍTICAS PARA EL JSON:
       if (!currentConfig || !currentConfig.generated_responses) {
         return res.status(400).json({ error: 'Este workflow no tiene plantillas generadas para refinar.' });
       }
-      const groqCred = workflow.credentials.find((c: any) => c.type === 'groq_api_key');
+      let groqCred = workflow.credentials.find((c: any) => c.type === 'groq_api_key');
+      if (!groqCred) {
+        groqCred = (await prisma.credential.findFirst({ where: { userId, type: 'groq_api_key' } })) as any;
+      }
       let apiKeyToUse = process.env.GROQ_API_KEY;
       if (groqCred) {
         apiKeyToUse = CredentialService.decrypt(groqCred.encrypted, groqCred.iv);
       }
       if (!apiKeyToUse) return res.status(400).json({ error: 'No se encontro API Key de Groq asociada a este workflow.' });
-      // Filtrar para enviar a la IA solo lo que vamos a refinar
-      const templatesToRefine = service 
-        ? { [service]: currentConfig.generated_responses[service] } 
+
+      const templatesToRefine: Record<string, any> = service
+        ? { [service]: currentConfig.generated_responses[service] }
         : currentConfig.generated_responses;
       if (service && !templatesToRefine[service]) {
         return res.status(400).json({ error: 'El servicio especificado no existe en este workflow.' });
       }
-      const userInstruction = (refinement_prompt || '').trim() || 'Transforma y enriquece completamente estas plantillas en correos HTML ejecutivos de alta conversión, con cabecera corporativa #0f172a, bloques de valor con checkmarks, hoja de ruta de 3 pasos, franja de garantía y botones de acción claros.';
-      const businessContextInfo = currentConfig.businessContext ? `Contexto de la empresa: "${currentConfig.businessContext}"` : '';
-      const aiPrompt = `
-Eres un Director de Consultoría B2B y Diseñador Senior de Emails HTML Ejecutivos para Grupo Hormesis.
-${businessContextInfo}
-El usuario tiene actualmente estas plantillas de correo para responder a formularios web:
-${JSON.stringify(templatesToRefine, null, 2)}
+
+      const userInstruction =
+        (refinement_prompt || '').trim() ||
+        'Transforma y enriquece completamente el contenido para que sea una propuesta ejecutiva B2B de máxima autoridad y conversión.';
+      const businessContextInfo = currentConfig.businessContext || 'Consultora tecnológica de sistematización e Inteligencia Artificial (Grupo Hormesis).';
+      const modelsCascade = ['llama-3.3-70b-versatile', 'openai/gpt-oss-120b', 'llama-3.1-8b-instant'];
+
+      const refineSingleService = async (srvKey: string, currentTpl: any, idx: number): Promise<[string, { subject: string; body: string }]> => {
+        const mailtoBody = `Hola equipo de Grupo Hormesis,\n\nHe recibido su propuesta inicial sobre ${srvKey} y me gustaría avanzar con la Llamada de Diagnóstico (15 min).\n\nSaludos,\n[Nombre]`;
+        const mailtoHref = `mailto:ventas@grupohormesis.com?subject=${encodeURIComponent('Diagnóstico de Proyecto - ' + srvKey)}&body=${encodeURIComponent(mailtoBody)}`;
+
+        const currentPlainSnippet = (currentTpl?.body || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().substring(0, 600);
+        const prompt = `Eres un Director de Consultoría B2B de Grupo Hormesis.
+Contexto de la empresa: "${businessContextInfo}"
+Servicio: "${srvKey}"
+Asunto actual: "${currentTpl?.subject || srvKey}"
+Resumen del contenido actual: "${currentPlainSnippet}"
 
 INSTRUCCIÓN DE MEJORA DEL USUARIO:
 "${userInstruction}"
 
-REQUISITOS OBLIGATORIOS DE DISEÑO Y ESTRUCTURA HTML (PARA CADA SERVICIO):
-1. Aplica la instrucción del usuario y asegúrate de que cada correo tenga una estructura HTML EJECUTIVA COMPLETA Y SOFISTICADA (no un simple texto corto), con estilos inline:
-   - Contenedor principal (max-width: 640px, margin: 0 auto, background: #ffffff, border-radius: 14px, border: 1px solid #e2e8f0, overflow: hidden, font-family: 'Segoe UI', Inter, Arial, sans-serif).
-   - Cabecera corporativa en Azul Pizarra (#0f172a, padding: 30px 28px, borde superior #10b981) con insignia en Verde Esmeralda (#34d399), título impactante en blanco (#ffffff) sobre el servicio y subtítulo saludando a [Nombre].
-   - Cuerpo consultivo (padding: 28px) que conecte con los retos del cliente, una caja destacada de Propuesta de Valor y Entregables (background: #f8fafc, border-left: 4px solid #10b981, padding: 20px, con 3-4 puntos clave con iconos ✅/⚡/📈), y una Hoja de Ruta en 3 pasos claros (1. Diagnóstico de 15 min, 2. Propuesta y Arquitectura a Medida, 3. Implementación Ágil).
-   - Franja de garantía/confianza (background: #ecfdf5, border: 1px solid #a7f3d0, color: #065f46, padding: 14px 18px, border-radius: 8px).
-   - Bloque de Llamada a la Acción (CTA) centrado con Botón Principal en Verde Esmeralda (#10b981, texto #ffffff, href='[Link_Calendario]', texto '📅 Agendar Llamada de Diagnóstico (15 min)') y Botón Secundario (#0f172a, texto #ffffff, href='mailto:ventas@grupohormesis.com', texto '✉️ Responder por Correo').
-   - Pie de página corporativo de Grupo Hormesis (https://grupohormesis.es).
-2. Usa [Nombre] para referirte al cliente y [Link_Calendario] para el enlace de agendar reunión.
-3. CRÍTICO PARA EL CÓDIGO HTML: Debes usar ÚNICAMENTE comillas simples (') para todos los atributos dentro de tus etiquetas HTML. NO uses comillas dobles internas porque romperán el JSON.
-4. Devuelve EXACTAMENTE un JSON válido (sin bloques Markdown, sin texto antes ni después) manteniendo las mismas claves de servicio:
+Reescribe y mejora el contenido aplicando la instrucción del usuario para el servicio "${srvKey}". Usa [Nombre] para referirte al cliente.
+Devuelve ÚNICAMENTE un JSON válido con esta estructura exacta:
 {
-  "NombreDelServicio": {
-    "subject": "Asunto ejecutivo mejorado",
-    "body": "<div style='max-width: 640px; ...'>...</div>"
-  }
-}
-`;
-      const aiResponse = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${apiKeyToUse}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          model: 'openai/gpt-oss-120b',
-          messages: [
-            { role: 'system', content: 'You are a helpful JSON-only assistant. You must use single quotes for all HTML attributes to prevent JSON escaping errors. Do not use markdown blocks, just output the raw JSON.' },
-            { role: 'user', content: aiPrompt }
-          ],
-          temperature: 0.5,
-          max_tokens: 4000
-        })
-      });
-      if (!aiResponse.ok) {
-        const errData = await aiResponse.json();
-        return res.status(500).json({ error: 'Groq API error: ' + JSON.stringify(errData) });
-      }
-      const aiData = await aiResponse.json();
-      let rawText = aiData.choices[0].message.content;
-      const match = rawText.match(/\{[\s\S]*\}/);
-      rawText = match ? match[0] : rawText.replace(/```json/g, '').replace(/```/g, '').trim();
-      
-      let newTemplates;
-      try {
-        newTemplates = JSON.parse(rawText);
-      } catch (parseError: any) {
-        console.error("❌ RAW TEXT GROQ REFINE:", rawText);
-        return res.status(500).json({ 
-          error: 'Error de parseo JSON desde Groq.', 
-          details: rawText 
-        });
-      }
-      // Asegurar que cada plantilla refinada conserve la estructura ejecutiva completa
-      for (const [srvKey, tplVal] of Object.entries(newTemplates as Record<string, any>)) {
-        if (tplVal && typeof tplVal.body === 'string') {
-          tplVal.body = ensureExecutiveFormEmailHtml(tplVal.body, srvKey, '[Link_Calendario]');
+  "subject": "Asunto ejecutivo mejorado aplicando la instrucción",
+  "badge": "GRUPO HORMESIS · SOLUCIÓN ESPECIALIZADA",
+  "headline": "Título ejecutivo potente enfocado en ${srvKey}",
+  "subtitle": "Propuesta estratégica preparada para [Nombre]",
+  "introParagraph1": "Primer párrafo consultivo aplicando la mejora solicitada y saludando a [Nombre].",
+  "introParagraph2": "Segundo párrafo consultivo de autoridad técnica y enfoque en resultados.",
+  "valueBoxTitle": "⚡ Impacto directo al implementar nuestra solución de ${srvKey}",
+  "benefits": [
+    { "icon": "✅", "title": "Beneficio clave 1", "desc": "Descripción persuasiva orientada a ROI." },
+    { "icon": "⚡", "title": "Beneficio clave 2", "desc": "Descripción persuasiva sobre eficiencia y automatización." },
+    { "icon": "📈", "title": "Beneficio clave 3", "desc": "Descripción persuasiva sobre escalabilidad." },
+    { "icon": "🔒", "title": "Beneficio clave 4", "desc": "Descripción persuasiva sobre seguridad y soporte." }
+  ],
+  "steps": [
+    { "title": "1. Sesión de Diagnóstico Técnico (15 min)", "desc": "Analizamos tu caso actual y objetivos clave." },
+    { "title": "2. Arquitectura y Propuesta a Medida", "desc": "Entregamos el plan de implementación detallado con plazos y ROI." },
+    { "title": "3. Despliegue Ágil y Resultados", "desc": "Ejecución por fases con garantía técnica." }
+  ],
+  "guarantee": "Confidencialidad total, arquitectura escalable diseñada a medida y enfoque 100% en retorno de inversión."
+}`;
+
+        const orderedModels = [
+          modelsCascade[idx % modelsCascade.length],
+          ...modelsCascade.filter((_, i) => i !== idx % modelsCascade.length)
+        ];
+
+        for (const modelName of orderedModels) {
+          try {
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 14000);
+            const aiResponse = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+              method: 'POST',
+              signal: controller.signal,
+              headers: {
+                Authorization: `Bearer ${apiKeyToUse}`,
+                'Content-Type': 'application/json'
+              },
+              body: JSON.stringify({
+                model: modelName,
+                response_format: { type: 'json_object' },
+                messages: [
+                  { role: 'system', content: 'You are an elite B2B Copywriter. Respond only with a valid JSON object.' },
+                  { role: 'user', content: prompt }
+                ],
+                temperature: 0.5,
+                max_tokens: 1800
+              })
+            });
+            clearTimeout(timeoutId);
+
+            if (aiResponse.ok) {
+              const aiData = await aiResponse.json();
+              const rawText = aiData.choices?.[0]?.message?.content || '';
+              const match = rawText.match(/\{[\s\S]*\}/);
+              if (match) {
+                const parsed = JSON.parse(match[0]);
+                const benefitsHtml = (Array.isArray(parsed.benefits) ? parsed.benefits : [])
+                  .map(
+                    (b: any) =>
+                      `<div style='margin-bottom: 12px; padding-bottom: 12px; border-bottom: 1px solid #e2e8f0;'>
+                        <div style='font-size: 14.5px; font-weight: 700; color: #0f172a; margin-bottom: 3px;'>${b.icon || '✅'} ${b.title || ''}</div>
+                        <div style='font-size: 13.5px; color: #475569; line-height: 1.55;'>${b.desc || ''}</div>
+                      </div>`
+                  )
+                  .join('');
+                const stepsHtml = (Array.isArray(parsed.steps) ? parsed.steps : [])
+                  .map(
+                    (s: any) =>
+                      `<div style='margin-bottom: 10px; font-size: 13.5px; color: #334155; line-height: 1.5;'>
+                        <strong style='color: #0f172a;'>${s.title || ''}:</strong> ${s.desc || ''}
+                      </div>`
+                  )
+                  .join('');
+
+                const richHtml = `<div style='max-width: 640px; margin: 0 auto; font-family: -apple-system, BlinkMacSystemFont, Segoe UI, Inter, Helvetica, Arial, sans-serif; background: #ffffff; border-radius: 14px; overflow: hidden; border: 1px solid #e2e8f0; box-shadow: 0 12px 32px rgba(15, 23, 42, 0.08); color: #1e293b;'>
+  <div style='background: #0f172a; border-top: 4px solid #10b981; padding: 32px 28px;'>
+    <span style='display: inline-block; background: rgba(16, 185, 129, 0.18); color: #34d399; font-size: 11px; font-weight: 700; letter-spacing: 1.2px; text-transform: uppercase; padding: 5px 12px; border-radius: 9999px; border: 1px solid rgba(52, 211, 153, 0.3);'>${parsed.badge || 'GRUPO HORMESIS · SOLUCIÓN ESPECIALIZADA'}</span>
+    <h1 style='color: #ffffff; font-size: 22px; font-weight: 800; margin: 14px 0 6px 0; line-height: 1.3;'>${parsed.headline || `Propuesta Estratégica: ${srvKey}`}</h1>
+    <p style='color: #94a3b8; font-size: 14px; margin: 0; line-height: 1.5;'>${parsed.subtitle || 'Preparado especialmente para [Nombre]'}</p>
+  </div>
+  <div style='padding: 28px;'>
+    <p style='font-size: 15px; color: #334155; line-height: 1.7; margin: 0 0 14px 0;'>${parsed.introParagraph1 || ''}</p>
+    <p style='font-size: 15px; color: #334155; line-height: 1.7; margin: 0 0 22px 0;'>${parsed.introParagraph2 || ''}</p>
+    <div style='background: #f8fafc; border-left: 4px solid #10b981; border-radius: 8px; padding: 20px 22px; margin: 24px 0;'>
+      <h3 style='margin: 0 0 14px 0; color: #0f172a; font-size: 16px; font-weight: 700;'>${parsed.valueBoxTitle || `⚡ Impacto directo en ${srvKey}`}</h3>
+      ${benefitsHtml}
+    </div>
+    <div style='background: #ffffff; border: 1px solid #e2e8f0; border-radius: 10px; padding: 20px 22px; margin: 22px 0;'>
+      <h4 style='margin: 0 0 12px 0; color: #0f172a; font-size: 14px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px;'>📋 Hoja de Ruta de Implementación</h4>
+      ${stepsHtml}
+    </div>
+    <div style='background: #ecfdf5; border: 1px solid #a7f3d0; border-radius: 8px; padding: 14px 18px; color: #065f46; font-size: 13px; margin-bottom: 24px; line-height: 1.5;'>
+      🔒 <strong>Garantía Grupo Hormesis:</strong> ${parsed.guarantee || 'Confidencialidad total y enfoque 100% en rentabilidad.'}
+    </div>
+    <div style='text-align: center; padding: 24px 20px; background: #f8fafc; border-radius: 12px; border: 1px solid #e2e8f0;'>
+      <p style='margin: 0 0 16px 0; color: #0f172a; font-size: 15px; font-weight: 700;'>¿Evaluamos cómo aplicarlo a tu negocio en una sesión de 15 minutos?</p>
+      <a href='[Link_Calendario]' target='_blank' style='display: inline-block; background: #10b981; color: #ffffff; padding: 14px 26px; border-radius: 8px; font-weight: 700; font-size: 14px; text-decoration: none; margin: 6px; box-shadow: 0 4px 12px rgba(16, 185, 129, 0.3);'>📅 Agendar Llamada de Diagnóstico (15 min)</a>
+      <a href='${mailtoHref}' style='display: inline-block; background: #0f172a; color: #ffffff; padding: 13px 22px; border-radius: 8px; font-weight: 600; font-size: 13px; text-decoration: none; margin: 6px;'>✉️ Responder con Detalles por Correo</a>
+    </div>
+  </div>
+  <div style='background: #0f172a; padding: 20px 28px; text-align: center; border-top: 1px solid #1e293b;'>
+    <p style='margin: 0 0 4px 0; color: #f8fafc; font-size: 13px; font-weight: 700;'>Grupo Hormesis · Sistematización Empresarial e Inteligencia Artificial</p>
+    <p style='margin: 0; color: #94a3b8; font-size: 12px;'><a href='https://grupohormesis.es' style='color: #34d399; text-decoration: none; font-weight: 600;'>grupohormesis.es</a></p>
+  </div>
+</div>`;
+
+                return [
+                  srvKey,
+                  {
+                    subject: parsed.subject || currentTpl?.subject || `Propuesta Estratégica: ${srvKey}`,
+                    body: richHtml
+                  }
+                ];
+              }
+            }
+          } catch (e) {}
         }
-      }
-      // Si fue un solo servicio, mergear con los existentes. Si fueron todos, reemplazar.
+
+        return [
+          srvKey,
+          {
+            subject: currentTpl?.subject || `Propuesta Estratégica: ${srvKey} | Grupo Hormesis`,
+            body: ensureExecutiveFormEmailHtml(currentTpl?.body || '', srvKey, '[Link_Calendario]', mailtoHref)
+          }
+        ];
+      };
+
+      const entriesToRefine = Object.entries(templatesToRefine);
+      const refinedEntries = await Promise.all(
+        entriesToRefine.map(([srvKey, tpl], idx) => refineSingleService(srvKey, tpl, idx))
+      );
+      const newTemplates = Object.fromEntries(refinedEntries);
+
       if (service) {
         currentConfig.generated_responses[service] = newTemplates[service];
       } else {
