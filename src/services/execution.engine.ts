@@ -10,7 +10,8 @@ import {
   generateArchetypeHtml,
   searchDesignTrendReferences,
   getDesignTrendKnowledge,
-  DesignTrendReference
+  DesignTrendReference,
+  detectNiche
 } from './design-trends.service';
 
 export function getFrontendUrl(): string {
@@ -644,7 +645,7 @@ class AutoOutreachGoogleMapsWorkflow extends BaseWorkflowType {
       if (!mockupHtml) {
         context.log(`Aviso: El lead ${lead.businessName} no tenía maqueta generada. Creando propuesta visual conceptual automática...`);
         try {
-          const brandAssets = await extractBrandAssets(lead.website || '', lead.businessName || 'Empresa', lead.id, (lead as any).notes || '', meta);
+          const brandAssets = await extractBrandAssets(lead.website || '', lead.businessName || 'Empresa', lead.id, (lead as any).notes || '', meta, (context.workflow.config as any)?.designStyle);
           mockupHeroImage = brandAssets.images.hero;
           const designTrend = getDesignTrendKnowledge((lead as any).notes || meta?.niche || meta?.category || lead.businessName || '', brandAssets.layoutArchetype);
           const fallbackHtml = generateConceptualDesignHtml(
@@ -1135,7 +1136,14 @@ async function testImageUrl(url: string | null): Promise<string | null> {
   }
 }
 
-export async function extractBrandAssets(websiteUrl: string, businessName: string, leadId: string, niche: string, leadMetadata?: any): Promise<{
+export async function extractBrandAssets(
+  websiteUrl: string, 
+  businessName: string, 
+  leadId: string, 
+  niche: string, 
+  leadMetadata?: any,
+  requestedDesignStyle?: string
+): Promise<{
   palette: {
     primary: string;
     accent: string;
@@ -1163,7 +1171,7 @@ export async function extractBrandAssets(websiteUrl: string, businessName: strin
     avatar1: string;
     avatar2: string;
   };
-  layoutArchetype: 'editorial_magazine' | 'brutalist_minimal' | 'luxury_dark_split' | 'bento_tech';
+  layoutArchetype: 'editorial_magazine' | 'brutalist_minimal' | 'luxury_dark_split' | 'bento_tech' | 'culinary_hospitality';
 }> {
   let foundHexes: string[] = [];
   const counts: Record<string, number> = {};
@@ -1333,14 +1341,21 @@ export async function extractBrandAssets(websiteUrl: string, businessName: strin
     return '#' + [r, g, b].map(x => x.toString(16).padStart(2, '0')).join('');
   }
 
-  // Determinación de Arquetipo de Diseño Pinterest/Dribbble
-  const archetypes: Array<'editorial_magazine' | 'brutalist_minimal' | 'luxury_dark_split' | 'bento_tech'> = [
-    'editorial_magazine',
-    'brutalist_minimal',
-    'luxury_dark_split',
-    'bento_tech'
-  ];
-  const layoutArchetype = archetypes[seed % archetypes.length];
+  // Determinación de Arquetipo de Diseño Pinterest/Dribbble/Michelin
+  const detectedNiche = detectNiche(niche, businessName, leadMetadata?.notes || leadMetadata?.category || leadMetadata?.searchQuery);
+  let layoutArchetype: 'editorial_magazine' | 'brutalist_minimal' | 'luxury_dark_split' | 'bento_tech' | 'culinary_hospitality';
+
+  if (requestedDesignStyle === 'culinary_hospitality' || detectedNiche === 'restaurantes' || detectedNiche === 'turismo') {
+    layoutArchetype = 'culinary_hospitality';
+  } else {
+    const archetypes: Array<'editorial_magazine' | 'brutalist_minimal' | 'luxury_dark_split' | 'bento_tech'> = [
+      'editorial_magazine',
+      'brutalist_minimal',
+      'luxury_dark_split',
+      'bento_tech'
+    ];
+    layoutArchetype = archetypes[seed % archetypes.length];
+  }
 
   // Paleta de Colores
   let palette = {
@@ -2119,7 +2134,7 @@ class GoogleStitchWorkflow extends BaseWorkflowType {
       const leadRating = (lead as any).rating || meta?.rating || 4.9;
 
       // 1. Extraer marca, imágenes reales y definir arquetipo de diseño
-      const brandAssets = await extractBrandAssets(websiteUrl, leadName, lead.id, (lead as any).notes || '', meta);
+      const brandAssets = await extractBrandAssets(websiteUrl, leadName, lead.id, (lead as any).notes || '', meta, designStyle);
       const brandPalette = brandAssets.palette;
       const catImages = brandAssets.images;
       const fallbackCat = brandAssets.fallbackImages;
@@ -2141,7 +2156,28 @@ class GoogleStitchWorkflow extends BaseWorkflowType {
 
       // Definir especificaciones arquitectónicas profundas según el arquetipo de Pinterest / Dribbble
       let archetypePrompt = '';
-      if (archetype === 'bento_tech') {
+      if (archetype === 'culinary_hospitality') {
+        archetypePrompt = `
+👑 ARQUETIPO OBLIGATORIO: "HAUTE CUISINE & BOUTIQUE HOSPITALITY" (Tendencia Relais & Châteaux, Michelin Guide & Architectural Digest 2026)
+- COMPOSICIÓN DEL HERO (¡PROHIBIDO EL TÍPICO 2-COLUMNAS TEXTO/IMAGEN GENÉRICO!):
+  * Gran Escaparate Sensorial & Motor de Reservas Gastronómico / Hotelero:
+    1. Barra superior de aviso con horarios de servicio o recepción ("Almuerzos 13:00 - 16:30 · Cenas 20:00 - 23:45" o "Concierge 24/7 · Check-in 15:00") y ubicación en ${leadAddress}.
+    2. Titular Evocativo y Monumental en tipografía Serif de lujo ('Playfair Display' o 'Cormorant Garamond') que despierte el apetito y las emociones sensoriales.
+    3. Badge de prestigio ("⭐ Guía Michelin / Soles Repsol / Travellers' Choice 2026").
+    4. MOTOR DE RESERVAS INTERACTIVO INTEGRADO EN EL HERO (Selector de Fecha, Comensales: 2, 4, 6+, Turno: Almuerzo / Cena / Terraza, y botón directo "Confirmar Mesa al Instante").
+    5. Escaparate fotográfico de alta definición (${catImages.hero}) con marco de lujo y tarjeta flotante de valoración (⭐ ${leadRating} / 5).
+- COMPOSICIÓN DE SECCIONES (¡ESTRICTAMENTE ADAPTADO A RESTAURACIÓN Y HOSTELERÍA!):
+  1. Navbar de lujo con logo oficial, enlaces (#experiencia, #carta, #bodega, #espacio, #reservas) y CTA destacado: <a href="#reservas" class="nav-cta">🍽️ Reservar Mesa</a> (¡PROHIBIDO escribir "Pedir Cita Online" o términos técnicos!).
+  2. Hero Sensorial con Motor de Reservas interactivo.
+  3. Tira de Distinciones y Confianza (Michelin, Repsol, Producto Km 0, TripAdvisor).
+  4. CARTA GASTRONÓMICA INTERACTIVA DE AUTOR: Desglose de 3-4 platos estrella (${catImages.service1}, ${catImages.service2}, ${catImages.service3}) con precios detallados, ingredientes nobles, maridaje sugerido y sellos de alérgenos/temporada.
+  5. EL ESPACIO & LA SALA: Muestra de ambiente íntimo, bodega subterránea y mesas de autor con fotografía de iluminación cálida.
+  6. RESEÑAS Y CRÍTICAS GASTRONÓMICAS: Testimonios de comensales verificados con avatares (${catImages.avatar1}, ${catImages.avatar2}).
+  7. SECCIÓN DE RESERVAS DIRECTAS (#reservas): Selector de comensales, aviso de reservas de grupo y llamada directa con 1-clic a ${leadPhone}.
+  8. Footer refinado con horarios, dirección en ${leadAddress} y política de cancelaciones/alérgenos.
+- TIPOGRAFÍA: Google Fonts 'Playfair Display' o 'Cormorant Garamond' para titulares + 'Outfit' o 'Inter' para textos.
+- COLORES: Integra la paleta corporativa real ${brandPalette.primary} con acentos dorados/cálidos en ${brandPalette.accent}.`;
+      } else if (archetype === 'bento_tech') {
         archetypePrompt = `
 👑 ARQUETIPO OBLIGATORIO: "BENTO GRID VANGUARD TECH" (Tendencia Pinterest & Apple/Linear UI 2026)
 - COMPOSICIÓN DEL HERO (¡PROHIBIDO EL TÍPICO 2-COLUMNAS TEXTO/IMAGEN!):
@@ -2279,11 +2315,14 @@ REGLAS TÉCNICAS ESTRICTAS (CERO ELEMENTOS CORTADOS Y CERO IMÁGENES ROTAS):
        - Servicio 3: <img src="${catImages.service3}" referrerpolicy="no-referrer" onerror="this.onerror=null; this.src='${fallbackCat.service3}';" alt="Servicio 3">
        - Testimonios/Avatares: <img src="${catImages.avatar1}" referrerpolicy="no-referrer" onerror="this.onerror=null; this.src='${fallbackCat.avatar1}';" alt="Cliente">
      * RECURSOS VISUALES EN CÓDIGO GENERADOS POR GOOGLE: Puedes crear e incorporar libremente componentes visuales modernos en HTML/SVG (iconos vectoriales SVG nítidos en línea, mini dashboards interactivos, tarjetas bento de métricas, insignias flotantes con calificaciones). ¡Todo debe lucir ultra premium, sin dependencias externas rotas!
-3. ¡NAVBAR COMPLETO Y NUNCA VACÍO!:
-   - Debe contener:
+3. ¡NAVBAR COMPLETO Y COHERENTE CON EL SECTOR!:
+${archetype === 'culinary_hospitality' || /restauran|gastronom|tapas|pizz|asador|hosteler|cafeteri|cerveceri|bistrot|bar\b|taberna|hotel|rural|turis|resort/i.test(`${leadName} ${designTrend.niche}`) ? `   - Para Restauración, Gastronomía y Hotelería:
+     (a) El logo del cliente con el fallback tipográfico indicado.
+     (b) Menú de enlaces: "Nuestra Carta", "La Experiencia", "Bodega & Maridaje", "El Espacio", "Reservas".
+     (c) Botón de acción: <a href="#reservas" class="nav-cta">🍽️ Reservar Mesa</a> (o "Reservar Estancia"). ¡PROHIBIDO poner "Pedir Cita Online" o "Cómo Trabajamos"!` : `   - Para Servicios Profesionales y Empresas:
      (a) El logo del cliente con el fallback tipográfico indicado.
      (b) Menú de enlaces navegables (ej: "Inicio", "Especialidades", "Cómo Trabajamos", "Preguntas Frecuentes", "Contacto").
-     (c) Botón de contacto destacado: <a href="tel:${leadPhone}" class="nav-cta">Pedir Cita Online</a>.
+     (c) Botón de contacto destacado: <a href="tel:${leadPhone}" class="nav-cta">Pedir Cita Online</a>.`}
 
 DATOS DEL CLIENTE:
 - Empresa: "${leadName}"

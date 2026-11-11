@@ -8,9 +8,9 @@
 
 export interface DesignTrendReference {
   niche: string;
-  archetype: 'bento_tech' | 'editorial_magazine' | 'luxury_dark_split' | 'brutalist_minimal';
+  archetype: 'bento_tech' | 'editorial_magazine' | 'luxury_dark_split' | 'brutalist_minimal' | 'culinary_hospitality';
   trendTitle: string;
-  source: 'Pinterest Trends 2026' | 'Awwwards SOTD' | 'Dribbble Top Curations' | 'Swiss Modern Standards';
+  source: 'Pinterest Trends 2026' | 'Awwwards SOTD' | 'Dribbble Top Curations' | 'Swiss Modern Standards' | 'Relais & Châteaux / Michelin Aesthetics';
   visualHighlights: string[];
   keyComponents: string[];
   recommendedTypography: { display: string; body: string };
@@ -37,15 +37,28 @@ export function detectNiche(nicheText?: string, businessName?: string, notes?: s
 
 export function getDesignTrendKnowledge(nicheText: string, archetype: string): DesignTrendReference {
   const niche = detectNiche(nicheText);
-  const arch = (['bento_tech', 'editorial_magazine', 'luxury_dark_split', 'brutalist_minimal'].includes(archetype) 
+  const arch = (['bento_tech', 'editorial_magazine', 'luxury_dark_split', 'brutalist_minimal', 'culinary_hospitality'].includes(archetype) 
     ? archetype 
-    : 'bento_tech') as 'bento_tech' | 'editorial_magazine' | 'luxury_dark_split' | 'brutalist_minimal';
+    : (niche === 'restaurantes' || niche === 'turismo' ? 'culinary_hospitality' : 'bento_tech')) as 'bento_tech' | 'editorial_magazine' | 'luxury_dark_split' | 'brutalist_minimal' | 'culinary_hospitality';
 
   const nicheMap: Record<string, { title: string; highlights: string[]; components: string[] }> = {
     restaurantes: {
-      title: 'Kinetic Culinary & Sensory Immersion',
-      highlights: ['Micro-menús interactivos con badges de ingredientes de temporada', 'Selector directo de reserva de mesa sin intermediarios', 'Fotografía sensorial en gran formato con texturas y detalle'],
-      components: ['Reserva instantánea de mesa', 'Carta gastronómica interactiva', 'Sello de calidad y origen local']
+      title: 'Haute Cuisine & Sensory Atmosphere (Michelin & Boutique Hospitality)',
+      highlights: [
+        'Motor de reservas de mesa en tiempo real sin comisiones externas (Fecha, Comensales, Turno Almuerzo/Cena)',
+        'Carta gastronómica interactiva y menú degustación con maridaje de sumiller y alérgenos',
+        'Fotografía inmersiva de texturas culinarias, sala íntima y bodega subterránea'
+      ],
+      components: ['Reserva instantánea de mesa', 'Carta digital & Menú Degustación', 'Distintivo Guía Michelin / Soles Repsol']
+    },
+    turismo: {
+      title: 'Boutique Hotel & Resort Sanctuary Experience',
+      highlights: [
+        'Motor de reservas de estancias y suites con confirmación inmediata y concierge',
+        'Escaparate inmersivo de habitaciones de autor, vistas y servicios wellness',
+        'Tarifas oficiales garantizadas y atención personalizada sin intermediarios'
+      ],
+      components: ['Reserva directa de estancia / habitación', 'Galería de suites & spa', 'Sello de calidad turística y 4.9★']
     },
     salud: {
       title: 'Biomimetic Medical Trust & Clean UI',
@@ -100,15 +113,26 @@ export function getDesignTrendKnowledge(nicheText: string, archetype: string): D
     bento_tech: { source: 'Awwwards SOTD', typo: { display: 'Plus Jakarta Sans (800/900)', body: 'Space Grotesk & Inter' } },
     editorial_magazine: { source: 'Pinterest Trends 2026', typo: { display: 'Playfair Display & Cinzel', body: 'Inter (400/500)' } },
     luxury_dark_split: { source: 'Dribbble Top Curations', typo: { display: 'Outfit (700/800) & Syne', body: 'Inter' } },
-    brutalist_minimal: { source: 'Swiss Modern Standards', typo: { display: 'Syne (800) & Plus Jakarta Sans', body: 'Plus Jakarta Sans' } }
+    brutalist_minimal: { source: 'Swiss Modern Standards', typo: { display: 'Syne (800) & Plus Jakarta Sans', body: 'Plus Jakarta Sans' } },
+    culinary_hospitality: { source: 'Relais & Châteaux / Michelin Aesthetics', typo: { display: 'Playfair Display & Cormorant Garamond', body: 'Outfit & Inter' } }
   };
 
-  const archMeta = archetypeSources[arch] || archetypeSources.bento_tech;
+  const archMeta = archetypeSources[arch] || archetypeSources.culinary_hospitality;
+
+  const archetypeLabel = arch === 'culinary_hospitality' 
+    ? 'Alta Gastronomía & Relais' 
+    : arch === 'bento_tech' 
+      ? 'Bento Grid' 
+      : arch === 'editorial_magazine' 
+        ? 'Editorial' 
+        : arch === 'luxury_dark_split' 
+          ? 'Luxury Dark' 
+          : 'Neo-Brutalism';
 
   return {
     niche,
     archetype: arch,
-    trendTitle: `${currentNiche.title} (${arch === 'bento_tech' ? 'Bento Grid' : arch === 'editorial_magazine' ? 'Editorial' : arch === 'luxury_dark_split' ? 'Luxury Dark' : 'Neo-Brutalism'})`,
+    trendTitle: `${currentNiche.title} (${archetypeLabel})`,
     source: archMeta.source,
     visualHighlights: currentNiche.highlights,
     keyComponents: currentNiche.components,
@@ -176,11 +200,13 @@ export function generateArchetypeHtml(
     archetype
   );
 
-  const selectedArch = (['bento_tech', 'editorial_magazine', 'luxury_dark_split', 'brutalist_minimal'].includes(archetype)
+  const selectedArch = (['bento_tech', 'editorial_magazine', 'luxury_dark_split', 'brutalist_minimal', 'culinary_hospitality'].includes(archetype)
     ? archetype
-    : trend.archetype || 'bento_tech');
+    : (trend.archetype || (trend.niche === 'restaurantes' || trend.niche === 'turismo' ? 'culinary_hospitality' : 'bento_tech')));
 
-  if (selectedArch === 'editorial_magazine') {
+  if (selectedArch === 'culinary_hospitality') {
+    return generateCulinaryHospitalityHtml(leadName, websiteUrl, brandPalette, catImages, fallbackCat, leadPhone, leadAddress, leadRating, trend);
+  } else if (selectedArch === 'editorial_magazine') {
     return generateEditorialMagazineHtml(leadName, websiteUrl, brandPalette, catImages, fallbackCat, leadPhone, leadAddress, leadRating, trend);
   } else if (selectedArch === 'luxury_dark_split') {
     return generateLuxuryDarkSplitHtml(leadName, websiteUrl, brandPalette, catImages, fallbackCat, leadPhone, leadAddress, leadRating, trend);
@@ -1778,6 +1804,917 @@ function generateBrutalistMinimalHtml(
     <strong>${trend.trendTitle}</strong>
     <span style="font-size:0.75rem; opacity:0.8;">Arquetipo: Neo-Brutalism & Modern Architecture</span>
   </div>
+</body>
+</html>`;
+}
+
+// ------------------------------------------------------------------------------------------------
+// ARCHETYPE 5: HAUTE CUISINE & BOUTIQUE HOSPITALITY (Michelin, Relais & Châteaux 2026)
+// ------------------------------------------------------------------------------------------------
+function generateCulinaryHospitalityHtml(
+  leadName: string,
+  websiteUrl: string,
+  brandPalette: any,
+  catImages: any,
+  fallbackCat: any,
+  leadPhone: string,
+  leadAddress: string,
+  leadRating: number,
+  trend: DesignTrendReference
+): string {
+  const isHotel = /hotel|hostal|rural|turis|alojam|resort/i.test(`${leadName} ${trend.niche}`);
+  const logoHtml = catImages.logo
+    ? `<img src="${catImages.logo}" referrerpolicy="no-referrer" onerror="this.style.display='none'; if(this.nextElementSibling) this.nextElementSibling.style.display='inline-block';" alt="${leadName}" style="max-height: 48px; max-width: 200px; object-fit: contain;"><span style="display:none; font-family:'Playfair Display',serif; font-weight:800; font-size:1.45rem; color:#f8fafc; letter-spacing:0.04em;">${leadName}</span>`
+    : `<span style="font-family:'Playfair Display',serif; font-weight:800; font-size:1.45rem; color:#f8fafc; letter-spacing:0.04em; text-transform:uppercase;">${leadName}</span>`;
+
+  const heroImg = catImages.hero || fallbackCat.hero;
+  const s1Img = catImages.service1 || fallbackCat.service1;
+  const s2Img = catImages.service2 || fallbackCat.service2;
+  const s3Img = catImages.service3 || fallbackCat.service3;
+  const av1Img = catImages.avatar1 || fallbackCat.avatar1;
+  const av2Img = catImages.avatar2 || fallbackCat.avatar2;
+
+  const todayStr = new Date().toISOString().split('T')[0];
+
+  return `<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>${leadName} | ${isHotel ? 'Boutique Hotel & Hospitalidad de Autor' : 'Alta Gastronomía & Reservas Oficiales'}</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,600;0,700;0,800;1,400;1,600&family=Outfit:wght@300;400;500;600;700&family=Cormorant+Garamond:ital,wght@0,500;0,600;0,700;1,400&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --primary: ${brandPalette.primary};
+      --primary-accent: ${brandPalette.accent || '#d4af37'};
+      --gold: #d4af37;
+      --gold-light: #fef08a;
+      --bg: #0b0d12;
+      --bg-surface: #131720;
+      --bg-card: rgba(22, 28, 40, 0.75);
+      --text-main: #f8fafc;
+      --text-muted: #94a3b8;
+      --border-color: rgba(212, 175, 55, 0.2);
+      --border-subtle: rgba(255, 255, 255, 0.08);
+      --radius: 20px;
+    }
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html { scroll-behavior: smooth; }
+    body {
+      font-family: 'Outfit', -apple-system, BlinkMacSystemFont, sans-serif;
+      background: var(--bg);
+      color: var(--text-main);
+      line-height: 1.65;
+      background-image: 
+        radial-gradient(at 0% 0%, ${brandPalette.primary}22 0px, transparent 50%),
+        radial-gradient(at 100% 20%, ${brandPalette.accent}18 0px, transparent 40%),
+        radial-gradient(at 50% 80%, rgba(212, 175, 55, 0.06) 0px, transparent 50%);
+      background-attachment: fixed;
+    }
+
+    /* TOP NOTICE BAR */
+    .culinary-topbar {
+      background: rgba(11, 13, 18, 0.95);
+      border-bottom: 1px solid var(--border-subtle);
+      color: #cbd5e1;
+      padding: 10px 24px;
+      font-size: 0.82rem;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 12px;
+    }
+    .culinary-topbar strong { color: var(--gold); }
+    .topbar-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      background: rgba(212, 175, 55, 0.12);
+      border: 1px solid rgba(212, 175, 55, 0.3);
+      padding: 2px 10px;
+      border-radius: 999px;
+      color: var(--gold);
+      font-size: 0.75rem;
+      font-weight: 600;
+    }
+
+    /* NAVBAR */
+    .culinary-nav {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      background: rgba(15, 19, 27, 0.85);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      border-bottom: 1px solid var(--border-subtle);
+      padding: 18px 36px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .nav-links {
+      display: flex;
+      gap: 28px;
+      list-style: none;
+      align-items: center;
+    }
+    .nav-links a {
+      color: #cbd5e1;
+      text-decoration: none;
+      font-size: 0.9rem;
+      font-weight: 500;
+      letter-spacing: 0.03em;
+      transition: color 0.2s;
+    }
+    .nav-links a:hover { color: var(--gold); }
+    @media (max-width: 900px) { .nav-links { display: none; } }
+    .nav-actions { display: flex; align-items: center; gap: 14px; }
+    .btn-nav-reserve {
+      background: linear-gradient(135deg, var(--gold) 0%, #b8860b 100%);
+      color: #0b0d12;
+      font-weight: 700;
+      font-size: 0.88rem;
+      padding: 10px 22px;
+      border-radius: 999px;
+      text-decoration: none;
+      box-shadow: 0 4px 18px rgba(212, 175, 55, 0.35);
+      transition: transform 0.2s, box-shadow 0.2s;
+    }
+    .btn-nav-reserve:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 6px 24px rgba(212, 175, 55, 0.5);
+    }
+
+    /* HERO GASTRONÓMICO / BOUTIQUE */
+    .culinary-hero {
+      max-width: 1260px;
+      margin: 40px auto 60px;
+      padding: 0 24px;
+      display: grid;
+      grid-template-columns: 1.15fr 0.95fr;
+      gap: 40px;
+      align-items: center;
+    }
+    @media (max-width: 960px) { .culinary-hero { grid-template-columns: 1fr; margin-top: 20px; } }
+
+    .hero-badge-tag {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      background: rgba(212, 175, 55, 0.1);
+      border: 1px solid rgba(212, 175, 55, 0.35);
+      color: var(--gold);
+      padding: 6px 16px;
+      border-radius: 999px;
+      font-size: 0.8rem;
+      font-weight: 600;
+      letter-spacing: 0.05em;
+      margin-bottom: 20px;
+      text-transform: uppercase;
+    }
+    .hero-title {
+      font-family: 'Playfair Display', Georgia, serif;
+      font-size: clamp(2.4rem, 4.5vw, 3.8rem);
+      line-height: 1.15;
+      font-weight: 700;
+      color: #ffffff;
+      margin-bottom: 20px;
+      letter-spacing: -0.02em;
+    }
+    .hero-title em {
+      font-family: 'Cormorant Garamond', Georgia, serif;
+      font-style: italic;
+      color: var(--gold);
+      font-weight: 400;
+    }
+    .hero-desc {
+      font-size: 1.05rem;
+      color: #94a3b8;
+      margin-bottom: 30px;
+      line-height: 1.7;
+      max-width: 580px;
+    }
+
+    /* MOTOR DE RESERVAS WIDGET */
+    .booking-engine-box {
+      background: var(--bg-card);
+      border: 1px solid var(--border-color);
+      border-radius: var(--radius);
+      padding: 24px;
+      box-shadow: 0 20px 50px rgba(0, 0, 0, 0.45), 0 0 40px rgba(212, 175, 55, 0.08);
+      backdrop-filter: blur(16px);
+      margin-bottom: 24px;
+    }
+    .booking-engine-title {
+      font-size: 0.85rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--gold);
+      margin-bottom: 16px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .booking-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 12px;
+      margin-bottom: 16px;
+    }
+    @media (max-width: 640px) { .booking-grid { grid-template-columns: 1fr; } }
+    .booking-field label {
+      display: block;
+      font-size: 0.72rem;
+      text-transform: uppercase;
+      font-weight: 600;
+      color: #94a3b8;
+      margin-bottom: 6px;
+    }
+    .booking-input {
+      width: 100%;
+      background: rgba(11, 13, 18, 0.8);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      border-radius: 10px;
+      padding: 10px 12px;
+      color: #ffffff;
+      font-size: 0.88rem;
+      font-family: inherit;
+      outline: none;
+    }
+    .booking-input:focus { border-color: var(--gold); }
+    .btn-booking-confirm {
+      width: 100%;
+      background: linear-gradient(135deg, var(--gold) 0%, #b8860b 100%);
+      color: #0b0d12;
+      border: none;
+      border-radius: 12px;
+      padding: 14px 20px;
+      font-size: 0.95rem;
+      font-weight: 700;
+      cursor: pointer;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      gap: 8px;
+      text-decoration: none;
+      transition: all 0.2s;
+    }
+    .btn-booking-confirm:hover {
+      box-shadow: 0 8px 24px rgba(212, 175, 55, 0.4);
+      transform: translateY(-2px);
+    }
+
+    /* HERO VISUAL FRAME */
+    .hero-visual-frame {
+      position: relative;
+    }
+    .hero-visual-img {
+      width: 100%;
+      height: 520px;
+      object-fit: cover;
+      border-radius: 28px;
+      border: 1px solid var(--border-color);
+      box-shadow: 0 25px 60px rgba(0, 0, 0, 0.6);
+      display: block;
+    }
+    .hero-michelin-badge {
+      position: absolute;
+      top: 24px;
+      right: 24px;
+      background: rgba(15, 19, 27, 0.9);
+      border: 1px solid var(--gold);
+      border-radius: 16px;
+      padding: 12px 18px;
+      color: #ffffff;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+      backdrop-filter: blur(12px);
+      text-align: center;
+    }
+    .hero-michelin-badge span { display: block; font-size: 0.7rem; color: var(--gold); font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; }
+    .hero-michelin-badge strong { font-size: 1.15rem; color: #fff; font-family: 'Playfair Display', serif; }
+    
+    .hero-rating-badge {
+      position: absolute;
+      bottom: 24px;
+      left: 24px;
+      background: rgba(15, 19, 27, 0.92);
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      border-radius: 16px;
+      padding: 14px 20px;
+      color: #ffffff;
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+      backdrop-filter: blur(12px);
+    }
+
+    /* DISTINCTIONS STRIP */
+    .distinctions-strip {
+      border-top: 1px solid var(--border-subtle);
+      border-bottom: 1px solid var(--border-subtle);
+      background: rgba(19, 23, 32, 0.4);
+      padding: 24px 0;
+      margin: 40px 0;
+    }
+    .distinctions-grid {
+      max-width: 1260px;
+      margin: 0 auto;
+      padding: 0 24px;
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 20px;
+      text-align: center;
+    }
+    @media (max-width: 800px) { .distinctions-grid { grid-template-columns: repeat(2, 1fr); } }
+    .distinction-item strong { display: block; color: #fff; font-size: 0.95rem; margin-top: 4px; }
+    .distinction-item span { font-size: 0.78rem; color: var(--gold); text-transform: uppercase; letter-spacing: 0.05em; }
+
+    /* CARTA GASTRONÓMICA INTERACTIVA */
+    .menu-section {
+      max-width: 1260px;
+      margin: 80px auto;
+      padding: 0 24px;
+    }
+    .section-header-centered {
+      text-align: center;
+      max-width: 700px;
+      margin: 0 auto 50px;
+    }
+    .section-eyebrow {
+      font-size: 0.8rem;
+      color: var(--gold);
+      font-weight: 700;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      margin-bottom: 10px;
+      display: block;
+    }
+    .section-heading {
+      font-family: 'Playfair Display', Georgia, serif;
+      font-size: clamp(2rem, 3.5vw, 2.8rem);
+      color: #ffffff;
+      margin-bottom: 14px;
+    }
+    .menu-dishes-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 28px;
+    }
+    @media (max-width: 960px) { .menu-dishes-grid { grid-template-columns: 1fr; } }
+    .dish-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border-subtle);
+      border-radius: 20px;
+      overflow: hidden;
+      transition: transform 0.25s, border-color 0.25s, box-shadow 0.25s;
+    }
+    .dish-card:hover {
+      transform: translateY(-6px);
+      border-color: var(--border-color);
+      box-shadow: 0 16px 36px rgba(0, 0, 0, 0.4), 0 0 24px rgba(212, 175, 55, 0.12);
+    }
+    .dish-img-wrap {
+      position: relative;
+      height: 220px;
+      overflow: hidden;
+    }
+    .dish-img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      transition: transform 0.4s;
+    }
+    .dish-card:hover .dish-img { transform: scale(1.05); }
+    .dish-badge {
+      position: absolute;
+      top: 14px;
+      left: 14px;
+      background: rgba(11, 13, 18, 0.85);
+      border: 1px solid var(--gold);
+      color: var(--gold);
+      padding: 4px 12px;
+      border-radius: 999px;
+      font-size: 0.72rem;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+    }
+    .dish-body {
+      padding: 24px;
+    }
+    .dish-title-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      margin-bottom: 10px;
+      gap: 12px;
+    }
+    .dish-name {
+      font-family: 'Playfair Display', serif;
+      font-size: 1.25rem;
+      color: #ffffff;
+      font-weight: 700;
+    }
+    .dish-price {
+      font-size: 1.25rem;
+      font-weight: 700;
+      color: var(--gold);
+      white-space: nowrap;
+    }
+    .dish-desc {
+      font-size: 0.88rem;
+      color: #94a3b8;
+      line-height: 1.6;
+      margin-bottom: 16px;
+    }
+    .dish-pairing {
+      background: rgba(212, 175, 55, 0.08);
+      border-left: 2px solid var(--gold);
+      padding: 8px 12px;
+      border-radius: 0 8px 8px 0;
+      font-size: 0.78rem;
+      color: #cbd5e1;
+    }
+
+    /* EL ESPACIO & LA SALA */
+    .space-section {
+      max-width: 1260px;
+      margin: 80px auto;
+      padding: 0 24px;
+    }
+    .space-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 32px;
+      align-items: center;
+    }
+    @media (max-width: 900px) { .space-grid { grid-template-columns: 1fr; } }
+    .space-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius);
+      padding: 36px;
+    }
+    .space-feature-list {
+      list-style: none;
+      margin-top: 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+    .space-feature-item {
+      display: flex;
+      gap: 14px;
+      align-items: flex-start;
+    }
+    .space-feature-icon {
+      background: rgba(212, 175, 55, 0.15);
+      border: 1px solid var(--gold);
+      color: var(--gold);
+      width: 32px;
+      height: 32px;
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.9rem;
+      flex-shrink: 0;
+    }
+
+    /* REVIEWS */
+    .reviews-section {
+      max-width: 1260px;
+      margin: 80px auto;
+      padding: 0 24px;
+    }
+    .reviews-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 24px;
+    }
+    @media (max-width: 800px) { .reviews-grid { grid-template-columns: 1fr; } }
+    .review-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius);
+      padding: 30px;
+      position: relative;
+    }
+    .review-quote {
+      font-family: 'Cormorant Garamond', Georgia, serif;
+      font-style: italic;
+      font-size: 1.25rem;
+      color: #e2e8f0;
+      line-height: 1.6;
+      margin-bottom: 20px;
+    }
+    .review-author {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+    }
+    .review-avatar {
+      width: 48px;
+      height: 48px;
+      border-radius: 50%;
+      object-fit: cover;
+      border: 2px solid var(--gold);
+    }
+
+    /* RESERVATION CALLOUT BANNER */
+    .reservation-banner {
+      max-width: 1260px;
+      margin: 80px auto;
+      padding: 60px 40px;
+      background: linear-gradient(135deg, rgba(19, 23, 32, 0.95) 0%, rgba(30, 20, 20, 0.95) 100%);
+      border: 1px solid var(--border-color);
+      border-radius: 28px;
+      text-align: center;
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6);
+      position: relative;
+      overflow: hidden;
+    }
+    .reservation-banner h2 {
+      font-family: 'Playfair Display', serif;
+      font-size: clamp(2rem, 3.5vw, 3rem);
+      color: #ffffff;
+      margin-bottom: 14px;
+    }
+    .banner-actions {
+      display: flex;
+      justify-content: center;
+      gap: 16px;
+      margin-top: 30px;
+      flex-wrap: wrap;
+    }
+    .btn-gold-big {
+      background: linear-gradient(135deg, var(--gold) 0%, #b8860b 100%);
+      color: #0b0d12;
+      font-weight: 700;
+      font-size: 1.05rem;
+      padding: 16px 36px;
+      border-radius: 999px;
+      text-decoration: none;
+      box-shadow: 0 6px 24px rgba(212, 175, 55, 0.4);
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .btn-secondary-dark {
+      background: rgba(255, 255, 255, 0.08);
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      color: #fff;
+      font-weight: 600;
+      font-size: 1.05rem;
+      padding: 16px 32px;
+      border-radius: 999px;
+      text-decoration: none;
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    /* FOOTER */
+    .culinary-footer {
+      border-top: 1px solid var(--border-subtle);
+      background: #090b0e;
+      padding: 50px 24px 40px;
+      text-align: center;
+      color: #94a3b8;
+      font-size: 0.88rem;
+    }
+    .footer-brand {
+      font-family: 'Playfair Display', serif;
+      font-size: 1.4rem;
+      color: #fff;
+      margin-bottom: 10px;
+    }
+
+    .trend-indicator-badge {
+      position: fixed;
+      bottom: 20px;
+      right: 20px;
+      background: rgba(15, 19, 27, 0.95);
+      border: 1px solid var(--gold);
+      border-radius: 14px;
+      padding: 10px 16px;
+      color: #ffffff;
+      font-size: 0.8rem;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+      z-index: 1000;
+      backdrop-filter: blur(10px);
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+    .trend-tag { color: var(--gold); font-size: 0.7rem; font-weight: 700; text-transform: uppercase; }
+  </style>
+</head>
+<body>
+
+  <!-- TOP NOTICE BAR -->
+  <aside class="culinary-topbar">
+    <div>
+      <span class="topbar-badge">✨ Experiencia 2026</span>
+      <strong>${isHotel ? 'Recepción & Concierge 24/7' : 'Servicio Gastronómico'}:</strong>
+      ${isHotel ? 'Check-in: 15:00 · Desayuno Gourmet incluido' : 'Almuerzos: 13:00 - 16:30 · Cenas: 20:00 - 23:45'}
+    </div>
+    <div>
+      📍 ${leadAddress} · 📞 Reservas directas: <a href="tel:${leadPhone}" style="color:var(--gold); font-weight:700; text-decoration:none;">${leadPhone}</a>
+    </div>
+  </aside>
+
+  <!-- NAVBAR -->
+  <header class="culinary-nav">
+    <div class="logo-wrap">
+      ${logoHtml}
+    </div>
+    <ul class="nav-links">
+      <li><a href="#inicio">Inicio</a></li>
+      <li><a href="#carta">${isHotel ? 'Suites & Servicios' : 'Nuestra Carta'}</a></li>
+      <li><a href="#experiencia">La Experiencia</a></li>
+      <li><a href="#bodega">${isHotel ? 'Wellness & Bodega' : 'Bodega & Maridaje'}</a></li>
+      <li><a href="#espacio">El Espacio</a></li>
+      <li><a href="#reservas">Reservas</a></li>
+    </ul>
+    <div class="nav-actions">
+      <a href="#reservas" class="btn-nav-reserve">🍽️ Reservar Mesa</a>
+    </div>
+  </header>
+
+  <!-- HERO SECTION -->
+  <section class="culinary-hero" id="inicio">
+    <div class="hero-content">
+      <div class="hero-badge-tag">
+        ⭐ ${isHotel ? 'Hospitalidad de Autor & Confort' : 'Alta Gastronomía & Tradición'} · ${leadAddress}
+      </div>
+      <h1 class="hero-title">
+        Donde el sabor se convierte en un <em>arte inolvidable.</em>
+      </h1>
+      <p class="hero-desc">
+        ${isHotel 
+          ? `Disfruta del confort y la distinción en ${leadName}. Habitaciones de autor, atención personalizada y el encanto inigualable de ${leadAddress}.` 
+          : `Bienvenido a ${leadName}. Una propuesta culinaria guiada por el respeto al producto de temporada, técnicas de autor y una bodega con más de 80 referencias seleccionadas.`}
+      </p>
+
+      <!-- MOTOR DE RESERVAS WIDGET -->
+      <div class="booking-engine-box">
+        <div class="booking-engine-title">
+          <span>📅</span> ${isHotel ? 'Motor de Disponibilidad & Estancias' : 'Motor de Reservas Directas de Mesa'}
+        </div>
+        <div class="booking-grid">
+          <div class="booking-field">
+            <label>Fecha de Reserva</label>
+            <input type="date" value="${todayStr}" class="booking-input">
+          </div>
+          <div class="booking-field">
+            <label>${isHotel ? 'Huéspedes' : 'Comensales'}</label>
+            <select class="booking-input">
+              <option>2 Personas (Mesa Íntima)</option>
+              <option>4 Personas</option>
+              <option>6 Personas</option>
+              <option>8+ Personas (Grupo)</option>
+            </select>
+          </div>
+          <div class="booking-field">
+            <label>Turno / Horario</label>
+            <select class="booking-input">
+              <option>Almuerzo · 14:00</option>
+              <option>Almuerzo · 15:00</option>
+              <option>Cena · 20:30</option>
+              <option>Cena · 21:30</option>
+              <option>Cena · 22:30</option>
+              <option>Terraza Climatizada</option>
+            </select>
+          </div>
+        </div>
+        <a href="tel:${leadPhone}" class="btn-booking-confirm">
+          🍽️ Confirmar Reserva de Mesa · ${leadPhone}
+        </a>
+      </div>
+    </div>
+
+    <!-- HERO VISUAL -->
+    <div class="hero-visual-frame">
+      <img src="${heroImg}" referrerpolicy="no-referrer" onerror="this.onerror=null; this.src='${fallbackCat.hero}';" class="hero-visual-img" alt="${leadName}">
+      
+      <div class="hero-michelin-badge">
+        <span>Guía de Excelencia</span>
+        <strong>Recomendado 2026</strong>
+      </div>
+
+      <div class="hero-rating-badge">
+        <div style="font-size:1.8rem; color:var(--gold); font-weight:800;">${leadRating} ★</div>
+        <div>
+          <strong style="display:block; font-size:0.9rem;">Valoración Oficial en Google</strong>
+          <span style="font-size:0.75rem; color:#94a3b8;">Opiniones verificadas de clientes</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- DISTINCTIONS STRIP -->
+  <aside class="distinctions-strip">
+    <div class="distinctions-grid">
+      <div class="distinction-item">
+        <span>Distinción Culinaria</span>
+        <strong>🏆 Recomendado Gastronómico 2026</strong>
+      </div>
+      <div class="distinction-item">
+        <span>Materia Prima</span>
+        <strong>🌿 Producto de Temporada & Km 0</strong>
+      </div>
+      <div class="distinction-item">
+        <span>Cava & Maridaje</span>
+        <strong>🍷 Selección Exclusiva de Sumiller</strong>
+      </div>
+      <div class="distinction-item">
+        <span>Experiencia Cliente</span>
+        <strong>⭐ ${leadRating}/5 Satisfacción Garantizada</strong>
+      </div>
+    </div>
+  </aside>
+
+  <!-- CARTA GASTRONÓMICA INTERACTIVA -->
+  <section class="menu-section" id="carta">
+    <div class="section-header-centered">
+      <span class="section-eyebrow">Gastronomía de Vanguardia</span>
+      <h2 class="section-heading">Nuestra Carta & Especialidades</h2>
+      <p style="color:#94a3b8; font-size:0.95rem;">
+        Platos elaborados al momento con ingredientes nobles de lonja y huerto propio, respetando las texturas y potenciando cada matiz de sabor.
+      </p>
+    </div>
+
+    <div class="menu-dishes-grid">
+      <!-- PLATO 1 -->
+      <article class="dish-card">
+        <div class="dish-img-wrap">
+          <img src="${s1Img}" referrerpolicy="no-referrer" onerror="this.onerror=null; this.src='${fallbackCat.service1}';" class="dish-img" alt="Especialidad 1">
+          <span class="dish-badge">Especialidad de la Casa</span>
+        </div>
+        <div class="dish-body">
+          <div class="dish-title-row">
+            <h3 class="dish-name">Solomillo de Autor a la Brasa</h3>
+            <span class="dish-price">26,50 €</span>
+          </div>
+          <p class="dish-desc">Corte madurado durante 45 días, asado a fuego de sarmiento con reducción de vino añejo y guarnición de patata trufada.</p>
+          <div class="dish-pairing">🍷 <strong>Maridaje:</strong> Tinto Reserva D.O. de cuerpo intenso.</div>
+        </div>
+      </article>
+
+      <!-- PLATO 2 -->
+      <article class="dish-card">
+        <div class="dish-img-wrap">
+          <img src="${s2Img}" referrerpolicy="no-referrer" onerror="this.onerror=null; this.src='${fallbackCat.service2}';" class="dish-img" alt="Especialidad 2">
+          <span class="dish-badge">Del Cantábrico</span>
+        </div>
+        <div class="dish-body">
+          <div class="dish-title-row">
+            <h3 class="dish-name">Arroz Meloso con Bogavante</h3>
+            <span class="dish-price">24,00 €</span>
+          </div>
+          <p class="dish-desc">Fondo reducido de marisco con azafrán en hebra, bogavante fresco y emulsión suave de alioli de ajo asado.</p>
+          <div class="dish-pairing">🥂 <strong>Maridaje:</strong> Blanco fermentado en barrica o espumoso brut nature.</div>
+        </div>
+      </article>
+
+      <!-- PLATO 3 -->
+      <article class="dish-card">
+        <div class="dish-img-wrap">
+          <img src="${s3Img}" referrerpolicy="no-referrer" onerror="this.onerror=null; this.src='${fallbackCat.service3}';" class="dish-img" alt="Especialidad 3">
+          <span class="dish-badge">Sugerencia del Chef</span>
+        </div>
+        <div class="dish-body">
+          <div class="dish-title-row">
+            <h3 class="dish-name">Tartar Templado de Salmón & Aguacate</h3>
+            <span class="dish-price">19,50 €</span>
+          </div>
+          <p class="dish-desc">Dados de salmón salvaje macerado en cítricos y soja suave, base de aguacate cremoso y toques crujientes de alga nori.</p>
+          <div class="dish-pairing">🍷 <strong>Maridaje:</strong> Rosado fresco o Albariño sobre lías.</div>
+        </div>
+      </article>
+    </div>
+  </section>
+
+  <!-- EL ESPACIO & LA SALA -->
+  <section class="space-section" id="espacio">
+    <div class="space-grid">
+      <div class="space-card">
+        <span class="section-eyebrow">Hospitalidad de Alto Nivel</span>
+        <h2 style="font-family:'Playfair Display',serif; font-size:2.2rem; color:#fff; margin-bottom:16px;">
+          Un refugio de calma y sofisticación en ${leadAddress}
+        </h2>
+        <p style="color:#94a3b8; font-size:0.95rem; line-height:1.7;">
+          Cada rincón de ${leadName} ha sido concebido para proporcionar una desconexión absoluta. Desde la acústica estudiada de la sala hasta el servicio de mesa impecable, cuidamos cada segundo de tu velada.
+        </p>
+        <ul class="space-feature-list">
+          <li class="space-feature-item">
+            <div class="space-feature-icon">🕯️</div>
+            <div>
+              <strong style="display:block; color:#fff; font-size:0.95rem;">Sala Principal Íntima</strong>
+              <span style="font-size:0.84rem; color:#94a3b8;">Mesas espaciadas con mantelería fina y privacidad total.</span>
+            </div>
+          </li>
+          <li class="space-feature-item">
+            <div class="space-feature-icon">🍇</div>
+            <div>
+              <strong style="display:block; color:#fff; font-size:0.95rem;">Cava Privada & Degustación</strong>
+              <span style="font-size:0.84rem; color:#94a3b8;">Visitas guiadas por nuestro sumiller y catas personalizadas.</span>
+            </div>
+          </li>
+          <li class="space-feature-item">
+            <div class="space-feature-icon">🌿</div>
+            <div>
+              <strong style="display:block; color:#fff; font-size:0.95rem;">Terraza Climatizada & Eventos</strong>
+              <span style="font-size:0.84rem; color:#94a3b8;">Espacio reservable para comidas de empresa o celebraciones exclusivas.</span>
+            </div>
+          </li>
+        </ul>
+      </div>
+
+      <div>
+        <img src="${heroImg}" referrerpolicy="no-referrer" onerror="this.onerror=null; this.src='${fallbackCat.hero}';" style="width:100%; height:460px; object-fit:cover; border-radius:24px; border:1px solid var(--border-color); box-shadow:0 20px 50px rgba(0,0,0,0.5);" alt="Espacio y Sala">
+      </div>
+    </div>
+  </section>
+
+  <!-- RESEÑAS VERIFICADAS -->
+  <section class="reviews-section" id="experiencia">
+    <div class="section-header-centered">
+      <span class="section-eyebrow">La Opinión de Nuestros Clientes</span>
+      <h2 class="section-heading">Momentos Culinarios Inolvidables</h2>
+    </div>
+
+    <div class="reviews-grid">
+      <article class="review-card">
+        <div style="color:var(--gold); margin-bottom:12px; font-size:1.1rem;">★★★★★</div>
+        <p class="review-quote">
+          "Una de las experiencias gastronómicas más sorprendentes de la zona. El trato del personal fue excepcional y el punto de las carnes sencillamente perfecto."
+        </p>
+        <div class="review-author">
+          <img src="${av1Img}" referrerpolicy="no-referrer" onerror="this.onerror=null; this.src='${fallbackCat.avatar1}';" class="review-avatar" alt="Comensal">
+          <div>
+            <strong style="display:block; color:#fff; font-size:0.92rem;">Elena Gómez</strong>
+            <span style="font-size:0.75rem; color:#94a3b8;">Cliente recurrente en Google Maps</span>
+          </div>
+        </div>
+      </article>
+
+      <article class="review-card">
+        <div style="color:var(--gold); margin-bottom:12px; font-size:1.1rem;">★★★★★</div>
+        <p class="review-quote">
+          "Ambiente íntimo, servicio impecable y una carta de vinos con joyas que no encuentras en otros lugares. Totalmente recomendable para una ocasión especial."
+        </p>
+        <div class="review-author">
+          <img src="${av2Img}" referrerpolicy="no-referrer" onerror="this.onerror=null; this.src='${fallbackCat.avatar2}';" class="review-avatar" alt="Comensal">
+          <div>
+            <strong style="display:block; color:#fff; font-size:0.92rem;">Carlos Mendizábal</strong>
+            <span style="font-size:0.75rem; color:#94a3b8;">Crítica gastronómica verificada</span>
+          </div>
+        </div>
+      </article>
+    </div>
+  </section>
+
+  <!-- BANNER FINAL DE RESERVAS -->
+  <section class="reservation-banner" id="reservas">
+    <span class="section-eyebrow">Asegura tu Mesa</span>
+    <h2>Reserva Directa sin Intermediarios</h2>
+    <p style="color:#cbd5e1; max-width:620px; margin:0 auto; font-size:1.05rem;">
+      Garantizamos la mejor ubicación en sala y confirmación inmediata. Para reservas de grupos superiores a 8 personas o eventos privados, contacta directamente con nuestro equipo.
+    </p>
+
+    <div class="banner-actions">
+      <a href="tel:${leadPhone}" class="btn-gold-big">
+        📞 Llamar para Reservar: ${leadPhone}
+      </a>
+      <a href="https://wa.me/${leadPhone.replace(/\D/g, '')}?text=${encodeURIComponent(`Hola ${leadName}, deseo reservar mesa para una experiencia gastronómica.`)}" target="_blank" class="btn-secondary-dark">
+        💬 Reservar por WhatsApp
+      </a>
+    </div>
+    <p style="margin-top:20px; font-size:0.78rem; color:#94a3b8;">
+      Aviso de cortesía: Se ruega notificar modificaciones de comensales con 2 horas de antelación.
+    </p>
+  </section>
+
+  <!-- FOOTER -->
+  <footer class="culinary-footer">
+    <div class="footer-brand">${leadName}</div>
+    <p style="margin-bottom:6px;">${leadAddress} · Teléfono directo: ${leadPhone}</p>
+    <p style="font-size:0.78rem; opacity:0.7;">Propuesta conceptual de alta costura web · Identidad cromática oficial de ${websiteUrl}</p>
+  </footer>
+
+  <!-- WATERMARK TREND BADGE -->
+  <div class="trend-indicator-badge">
+    <span class="trend-tag">✨ Tendencia Web (${trend.source})</span>
+    <strong>${trend.trendTitle}</strong>
+    <span style="font-size:0.75rem; opacity:0.8;">Arquetipo: Haute Cuisine & Hospitality Vanguard 2026</span>
+  </div>
+
 </body>
 </html>`;
 }
