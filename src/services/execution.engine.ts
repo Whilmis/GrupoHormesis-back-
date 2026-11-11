@@ -13,6 +13,15 @@ import {
   DesignTrendReference,
   detectNiche
 } from './design-trends.service';
+import { enrichLeadWithGooglePlace, fetchWebsiteTextSnapshot, mapGoogleTypesToNiche, PlaceData } from './place-enrichment.service';
+import {
+  detectCulinarySubtype,
+  getDefaultCulinaryContent,
+  getCuratedCulinaryImages,
+  buildCulinaryContentPrompt,
+  mergeCulinaryContent,
+  renderCulinaryHospitalityHtml
+} from './culinary-template.service';
 
 export function getFrontendUrl(): string {
   const envUrl = process.env.FRONTEND_URL?.trim();
@@ -490,6 +499,14 @@ class LeadCollectorWorkflow extends BaseWorkflowType {
       let savedCount = 0;
       for (const l of validLeadsToAudit) {
         try {
+          const baseMeta = {
+            niche: selectedNiche,
+            searchQuery,
+            placeId: l.place_id,
+            types: l.types || [],
+            address: l.address,
+            rating: l.rating
+          };
           await prisma.lead.create({
             data: {
               projectId: context.workflow.projectId,
@@ -499,7 +516,7 @@ class LeadCollectorWorkflow extends BaseWorkflowType {
               website: l.website !== 'No disponible' && l.website !== 'Error de conexión' ? l.website : undefined,
               source: 'Google Maps (Scraper)',
               status: 'NUEVO',
-              metadata: l.metadata ? l.metadata : undefined
+              metadata: { ...baseMeta, ...(l.metadata || {}) }
             }
           });
           savedCount++;
@@ -1401,7 +1418,7 @@ export async function extractBrandAssets(
   }
 
   // Las fotografías de Hero y Servicios se generan exclusivamente con colecciones curadas de alta definición adaptadas al sector exacto
-  const fallbackCat = getCategoryImages(leadId, businessName, niche, websiteUrl, leadMetadata);
+  const fallbackCat = getCategoryImages(leadId, businessName, niche, websiteUrl, leadMetadata, requestedDesignStyle);
 
   return {
     palette,
@@ -1421,7 +1438,7 @@ export async function extractBrandAssets(
   };
 }
 
-function getCategoryImages(leadId: string, businessName: string, niche: string, website: string, leadMetadata?: any) {
+function getCategoryImages(leadId: string, businessName: string, niche: string, website: string, leadMetadata?: any, requestedDesignStyle?: string) {
   const metaParts = [
     businessName,
     niche,
@@ -1638,8 +1655,9 @@ function getCategoryImages(leadId: string, businessName: string, niche: string, 
 
   // 8. Restaurantes, Hostelería, Bares y Gastronomía (¡CERO falsos positivos con palabras como embargo, Barcelona o barrio!)
   if (
-    has('restauran', 'gastronom', 'tapas', 'pizz', 'asador', 'hosteler', 'cafeteri', 'cerveceri', 'marisqueri', 'churreri', 'bistrot', 'braser', 'vinoteci', 'bodeguita') ||
-    hasWord(/\b(bar|bares|taberna|meson)\b/)
+    requestedDesignStyle === 'culinary_hospitality' ||
+    has('restauran', 'gastronom', 'tapas', 'pizz', 'asador', 'hosteler', 'cafeteri', 'cerveceri', 'marisqueri', 'churreri', 'bistrot', 'braser', 'vinoteci', 'bodeguita', 'restaurant', 'food', 'meal_takeaway', 'meal_delivery', 'sushi', 'burger', 'hamburgues') ||
+    hasWord(/\b(bar|bares|taberna|meson|gastrobar|cafe|coctel|pub)\b/)
   ) {
     const heroes = [
       'https://images.unsplash.com/photo-1517248135467-4c7edcad34c4?auto=format&fit=crop&w=1200&q=80',
@@ -2095,13 +2113,29 @@ class GoogleStitchWorkflow extends BaseWorkflowType {
       take: 100
     });
 
-    // Filtrar: DEBEN tener auditoría (aiAuditReport o capturas) Y no tener maqueta aún
-    const leadsToProcess = candidateLeads.filter(lead => {
+    // Filtrar: DEBEN tener auditoría (aiAuditReport o capturas)
+    let leadsToProcess = candidateLeads.filter(lead => {
       const meta = (typeof lead.metadata === 'object' && lead.metadata) ? (lead.metadata as any) : {};
       const hasAnalysis = !!(meta.aiAuditReport || (meta.technicalAnalysis?.screenshots && meta.technicalAnalysis.screenshots.length > 0));
-      const hasMockup = !!(meta.creativeAssets?.mockup?.previewHtml || meta.creativeAssets?.mockup?.previewImageUrl || meta.generatedMockup);
-      return hasAnalysis && !hasMockup;
+      const mockup = meta.creativeAssets?.mockup;
+      const hasMockup = !!(mockup?.previewHtml || mockup?.previewImageUrl || meta.generatedMockup);
+
+      // Re-diseñar si la maqueta anterior contenía textos descontextualizados ("Soluciones Empresariales") o si el estilo es culinary_hospitality
+      const isCorruptedOrOutdated = hasMockup && (
+        mockup?.previewHtml?.includes('Soluciones Empresariales') ||
+        mockup?.previewHtml?.includes('Consultar con Expertos') ||
+        mockup?.previewHtml?.includes('Liderazgo Empresarial') ||
+        (designStyle === 'culinary_hospitality' && mockup?.layoutArchetype !== 'culinary_hospitality')
+      );
+
+      return hasAnalysis && (!hasMockup || isCorruptedOrOutdated || config?.forceRegenerate);
     }).slice(0, batchLimit);
+
+    // Fallback: Si todos ya tienen maqueta pero se ejecuta el workflow de diseño, regenerar los más recientes del lote
+    if (leadsToProcess.length === 0 && candidateLeads.length > 0) {
+      leadsToProcess = candidateLeads.slice(0, batchLimit);
+      context.log(`ℹ️ Actualizando maquetas para los ${leadsToProcess.length} leads del proyecto con el nuevo motor.`);
+    }
 
     if (leadsToProcess.length === 0) {
       context.log('ℹ️ Todos los leads de este proyecto ya cuentan con maqueta generada o no hay leads disponibles.');
@@ -2133,8 +2167,35 @@ class GoogleStitchWorkflow extends BaseWorkflowType {
       const leadAddress = (lead as any).address || (meta as any).address || 'España';
       const leadRating = (lead as any).rating || meta?.rating || 4.9;
 
+      // 0. Enriquecer con la ficha REAL de Google Maps (fotos del local, reseñas, horario, categorías)
+      const sourceCfg = (sourceWorkflow.config as any) || {};
+      const sourceLocationHint = String(sourceCfg.locations || '').split(',')[0]?.trim() || '';
+      let placeData: PlaceData | null = null;
+      try {
+        placeData = await enrichLeadWithGooglePlace(lead, meta, context.credentials['google_maps_api'], context.log, sourceLocationHint);
+        if (placeData) meta.placeData = placeData;
+      } catch (enrichErr: any) {
+        context.log(`Aviso enriqueciendo ficha de Google Maps: ${enrichErr.message}`);
+      }
+
+      // Pista de nicho: metadata del recolector + categorías reales de Google + nicho configurado en la campaña fuente
+      const googleTypes: string[] = placeData?.types || meta.types || [];
+      const nicheHint = [
+        (lead as any).notes,
+        meta.niche,
+        meta.searchQuery,
+        meta.category,
+        mapGoogleTypesToNiche(googleTypes),
+        googleTypes.join(' '),
+        (!meta.niche && !googleTypes.length) ? sourceCfg.niches : ''
+      ].filter(Boolean).join(' ');
+      if (nicheHint && !meta.niche) meta.niche = nicheHint.slice(0, 200);
+
+      const effAddress = placeData?.address || leadAddress;
+      const effRating = placeData?.rating || leadRating;
+
       // 1. Extraer marca, imágenes reales y definir arquetipo de diseño
-      const brandAssets = await extractBrandAssets(websiteUrl, leadName, lead.id, (lead as any).notes || '', meta, designStyle);
+      const brandAssets = await extractBrandAssets(websiteUrl, leadName, lead.id, nicheHint, meta, designStyle);
       const brandPalette = brandAssets.palette;
       const catImages = brandAssets.images;
       const fallbackCat = brandAssets.fallbackImages;
@@ -2146,7 +2207,7 @@ class GoogleStitchWorkflow extends BaseWorkflowType {
 
       // 2. Investigar referencias de tendencias de diseño web contemporáneas (Awwwards / Pinterest / Dribbble) adaptadas al nicho
       context.log(`🔍 Investigando referencias de tendencias de diseño web para el sector de "${leadName}"...`);
-      const designTrend = await searchDesignTrendReferences(leadName, archetype, (lead as any).notes || meta?.niche || meta?.category, leadAddress);
+      const designTrend = await searchDesignTrendReferences(leadName, archetype, nicheHint || meta?.niche || meta?.category, effAddress);
       context.log(`✨ Referencia de tendencia detectada: "${designTrend.trendTitle}" (${designTrend.source}).`);
 
       let generatedHtml = '';
@@ -2336,47 +2397,120 @@ FORMATO:
 - Código HTML5 autónomo, completo y responsive con Google Fonts y CSS en etiqueta <style>.
 - DEVUELVE EXCLUSIVAMENTE el código dentro de un bloque HTML (con doctype y html) sin introducciones.`;
 
-      // Intentar invocar los modelos de Google AI en cascada
-      for (const modelName of activeModels) {
+      if (archetype === 'culinary_hospitality') {
+        context.log(`🍽️ Diseñando propuesta gastronómica de alta gama para "${leadName}"...`);
+        const subtype = detectCulinarySubtype(`${nicheHint} ${leadName} ${googleTypes.join(' ')}`);
+        const baseContent = getDefaultCulinaryContent(subtype, leadName, effAddress);
+        const curatedPhotos = getCuratedCulinaryImages(subtype);
+        let websiteText = '';
         try {
-          const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${stitchApiKey}`;
-          const geminiRes = await fetch(geminiUrl, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              contents: [{ parts: [{ text: systemPrompt }] }]
-            })
+          websiteText = await fetchWebsiteTextSnapshot(websiteUrl);
+        } catch (wErr) {}
+
+        let finalContent = baseContent;
+        if (stitchApiKey && activeModels.length > 0) {
+          const contentPrompt = buildCulinaryContentPrompt({
+            leadName,
+            subtype,
+            leadAddress: effAddress,
+            leadRating: effRating,
+            googleTypes,
+            googleSummary: placeData?.summary,
+            openingHours: placeData?.openingHours || [],
+            reviewsText: (placeData?.reviews || []).map(r => r.text),
+            websiteText
           });
 
-          if (geminiRes.ok) {
-            const geminiData = await geminiRes.json();
-            let rawText = geminiData.candidates?.[0]?.content?.parts?.[0]?.text || '';
-            const htmlMatch = rawText.match(/```html([\s\S]*?)```/i);
-            if (htmlMatch) {
-              generatedHtml = htmlMatch[1].trim();
-            } else if (rawText.includes('<html') || rawText.includes('<!DOCTYPE')) {
-              generatedHtml = rawText.replace(/^```html?/i, '').replace(/```$/i, '').trim();
+          for (const modelName of activeModels) {
+            try {
+              const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${stitchApiKey}`;
+              const geminiRes = await fetch(geminiUrl, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  contents: [{ parts: [{ text: contentPrompt }] }],
+                  generationConfig: { responseMimeType: 'application/json' }
+                })
+              });
+              if (geminiRes.ok) {
+                const geminiData = await geminiRes.json();
+                const rawText = geminiData.candidates?.[0]?.content?.parts?.[0]?.text || '';
+                if (rawText) {
+                  try {
+                    const parsed = JSON.parse(rawText.replace(/```json/gi, '').replace(/```/g, '').trim());
+                    finalContent = mergeCulinaryContent(baseContent, parsed);
+                    context.log(`✨ Copy culinario y platos personalizados generados por Google AI (${modelName}) para "${leadName}".`);
+                    break;
+                  } catch (pErr) {}
+                }
+              }
+            } catch (e: any) {
+              context.log(`Aviso generando copy con ${modelName}: ${e.message}`);
             }
-            if (generatedHtml) {
-              context.log(`✅ Maqueta generada con éxito por Google AI (${modelName}) para ${leadName} (${generatedHtml.length} caracteres).`);
-              break;
-            }
-          } else {
-            const errData = await geminiRes.json();
-            context.log(`Aviso Google AI (${modelName}) status ${geminiRes.status}: ${errData.error?.message?.substring(0, 80)}`);
           }
-        } catch (err: any) {
-          context.log(`Error conectando a ${modelName}: ${err.message}`);
         }
-      }
 
-      // Fallback de ultra-diseño multi-arquetipo si todos los modelos se agotan
-      if (!generatedHtml) {
-        generatedHtml = generateConceptualDesignHtml(leadName, websiteUrl, brandPalette, catImages, fallbackCat, archetype, leadPhone, leadAddress, leadRating, meta, designTrend);
-      }
+        generatedHtml = renderCulinaryHospitalityHtml({
+          leadName,
+          websiteUrl,
+          brandPalette,
+          logoUrl: catImages.logo,
+          leadPhone: leadPhone && !/no disponible/i.test(leadPhone) ? leadPhone : (placeData?.phone || ''),
+          leadAddress: effAddress,
+          leadRating: effRating,
+          totalRatings: placeData?.totalRatings,
+          content: finalContent,
+          photos: placeData?.photos || [],
+          curatedPhotos,
+          reviews: placeData?.reviews || [],
+          openingHours: placeData?.openingHours || [],
+          trendLabel: designTrend.trendTitle
+        });
+        systemPrompt = `Motor Especializado Gastronomía & Hostelería (${subtype})`;
+        context.log(`✅ Propuesta gastronómica completada con éxito para "${leadName}" (${placeData?.photos?.length || 0} fotos del local, ${placeData?.reviews?.length || 0} reseñas reales).`);
+      } else {
+        // Intentar invocar los modelos de Google AI en cascada
+        for (const modelName of activeModels) {
+          try {
+            const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${stitchApiKey}`;
+            const geminiRes = await fetch(geminiUrl, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                contents: [{ parts: [{ text: systemPrompt }] }]
+              })
+            });
 
-      // Aplicar guardrails maestros de maquetación y protección de activos
-      generatedHtml = sanitizeAndGuardMockupHtml(generatedHtml, leadName, brandPalette, catImages, fallbackCat, websiteUrl);
+            if (geminiRes.ok) {
+              const geminiData = await geminiRes.json();
+              let rawText = geminiData.candidates?.[0]?.content?.parts?.[0]?.text || '';
+              const htmlMatch = rawText.match(/```html([\s\S]*?)```/i);
+              if (htmlMatch) {
+                generatedHtml = htmlMatch[1].trim();
+              } else if (rawText.includes('<html') || rawText.includes('<!DOCTYPE')) {
+                generatedHtml = rawText.replace(/^```html?/i, '').replace(/```$/i, '').trim();
+              }
+              if (generatedHtml) {
+                context.log(`✅ Maqueta generada con éxito por Google AI (${modelName}) para ${leadName} (${generatedHtml.length} caracteres).`);
+                break;
+              }
+            } else {
+              const errData = await geminiRes.json();
+              context.log(`Aviso Google AI (${modelName}) status ${geminiRes.status}: ${errData.error?.message?.substring(0, 80)}`);
+            }
+          } catch (err: any) {
+            context.log(`Error conectando a ${modelName}: ${err.message}`);
+          }
+        }
+
+        // Fallback de ultra-diseño multi-arquetipo si todos los modelos se agotan
+        if (!generatedHtml) {
+          generatedHtml = generateConceptualDesignHtml(leadName, websiteUrl, brandPalette, catImages, fallbackCat, archetype, leadPhone, leadAddress, leadRating, meta, designTrend);
+        }
+
+        // Aplicar guardrails maestros de maquetación y protección de activos
+        generatedHtml = sanitizeAndGuardMockupHtml(generatedHtml, leadName, brandPalette, catImages, fallbackCat, websiteUrl);
+      }
 
       let mockupScreenshotUrl = '';
       try {
