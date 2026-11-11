@@ -2422,6 +2422,67 @@ FORMATO:
 }
 
 
+export function ensureExecutiveFormEmailHtml(
+  rawBody: string,
+  serviceName: string,
+  bookingUrl: string = '[Link_Calendario]',
+  replyMailto?: string
+): string {
+  const cleanBody = (rawBody || '').trim();
+  const hasFullCardLayout =
+    cleanBody.includes('#0f172a') &&
+    (cleanBody.includes('<a ') || cleanBody.includes('href=')) &&
+    cleanBody.length > 900;
+
+  if (hasFullCardLayout) {
+    return cleanBody;
+  }
+
+  const defaultMailtoBody = `Hola equipo de Grupo Hormesis,\n\nHe recibido su propuesta sobre ${serviceName} y me gustaría coordinar nuestra Llamada de Diagnóstico de 15 minutos.\n\nSaludos,\n[Nombre]`;
+  const finalMailto =
+    replyMailto ||
+    `mailto:ventas@grupohormesis.com?subject=${encodeURIComponent('Diagnóstico de Proyecto - ' + serviceName)}&body=${encodeURIComponent(defaultMailtoBody)}`;
+
+  return `<div style='max-width: 640px; margin: 0 auto; font-family: -apple-system, BlinkMacSystemFont, Segoe UI, Inter, Helvetica, Arial, sans-serif; background: #ffffff; border-radius: 14px; overflow: hidden; border: 1px solid #e2e8f0; box-shadow: 0 12px 32px rgba(15, 23, 42, 0.08); color: #1e293b;'>
+  <div style='background: #0f172a; border-top: 4px solid #10b981; padding: 32px 28px;'>
+    <span style='display: inline-block; background: rgba(16, 185, 129, 0.18); color: #34d399; font-size: 11px; font-weight: 700; letter-spacing: 1.2px; text-transform: uppercase; padding: 5px 12px; border-radius: 9999px; border: 1px solid rgba(52, 211, 153, 0.3);'>GRUPO HORMESIS · SOLUCIÓN ESPECIALIZADA</span>
+    <h1 style='color: #ffffff; font-size: 22px; font-weight: 800; margin: 14px 0 6px 0; line-height: 1.3;'>Propuesta Estratégica: ${serviceName}</h1>
+    <p style='color: #94a3b8; font-size: 14px; margin: 0; line-height: 1.5;'>Preparado especialmente para <strong style='color: #f8fafc;'>[Nombre]</strong></p>
+  </div>
+  <div style='padding: 28px;'>
+    <div style='font-size: 15px; color: #334155; line-height: 1.7;'>
+      ${cleanBody}
+    </div>
+    <div style='background: #f8fafc; border-left: 4px solid #10b981; border-radius: 8px; padding: 18px 20px; margin: 24px 0;'>
+      <h3 style='margin: 0 0 10px 0; color: #0f172a; font-size: 15px; font-weight: 700;'>⚡ ¿Qué logramos al implementar esta solución en tu empresa?</h3>
+      <ul style='margin: 0; padding-left: 18px; color: #475569; font-size: 14px; line-height: 1.65;'>
+        <li style='margin-bottom: 6px;'><strong style='color: #0f172a;'>Arquitectura a Medida y Escalable:</strong> Diseñada específicamente para el flujo operativo de tu negocio, sin plantillas rígidas.</li>
+        <li style='margin-bottom: 6px;'><strong style='color: #0f172a;'>Ahorro Operativo Inmediato:</strong> Automatización de tareas críticas y reducción de cuellos de botella desde las primeras semanas.</li>
+        <li><strong style='color: #0f172a;'>Acompañamiento Técnico Directo:</strong> Soporte continuo de ingeniería y métricas claras de retorno de inversión (ROI).</li>
+      </ul>
+    </div>
+    <div style='background: #ffffff; border: 1px solid #e2e8f0; border-radius: 10px; padding: 20px; margin: 22px 0;'>
+      <h4 style='margin: 0 0 12px 0; color: #0f172a; font-size: 14px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px;'>📋 Próximos Pasos (Hoja de Ruta)</h4>
+      <p style='margin: 0 0 8px 0; font-size: 13.5px; color: #334155;'><strong>1. Diagnóstico Técnico (15 min):</strong> Evaluamos tu escenario actual y objetivos clave sin compromiso.</p>
+      <p style='margin: 0 0 8px 0; font-size: 13.5px; color: #334155;'><strong>2. Propuesta &amp; Arquitectura:</strong> Te presentamos el plan de acción detallado, plazos y alcance exacto.</p>
+      <p style='margin: 0; font-size: 13.5px; color: #334155;'><strong>3. Despliegue Ágil:</strong> Ejecución por fases con entregas verificables y garantía técnica.</p>
+    </div>
+    <div style='background: #ecfdf5; border: 1px solid #a7f3d0; border-radius: 8px; padding: 12px 16px; color: #065f46; font-size: 13px; margin-bottom: 24px;'>
+      🔒 <strong>Garantía Grupo Hormesis:</strong> Confidencialidad total, infraestructura de alto rendimiento y enfoque 100% en rentabilidad de negocio.
+    </div>
+    <div style='text-align: center; padding: 24px 20px; background: #f8fafc; border-radius: 12px; border: 1px solid #e2e8f0;'>
+      <p style='margin: 0 0 16px 0; color: #0f172a; font-size: 15px; font-weight: 700;'>¿Revisamos cómo aplicarlo a tu caso en una breve sesión de 15 minutos?</p>
+      <a href='${bookingUrl}' target='_blank' style='display: inline-block; background: #10b981; color: #ffffff; padding: 14px 26px; border-radius: 8px; font-weight: 700; font-size: 14px; text-decoration: none; margin: 6px; box-shadow: 0 4px 12px rgba(16, 185, 129, 0.3);'>📅 Agendar Llamada de Diagnóstico (15 min)</a>
+      <a href='${finalMailto}' style='display: inline-block; background: #0f172a; color: #ffffff; padding: 13px 22px; border-radius: 8px; font-weight: 600; font-size: 13px; text-decoration: none; margin: 6px;'>✉️ Responder con Detalles por Correo</a>
+    </div>
+  </div>
+  <div style='background: #0f172a; padding: 20px 28px; text-align: center; border-top: 1px solid #1e293b;'>
+    <p style='margin: 0 0 4px 0; color: #f8fafc; font-size: 13px; font-weight: 700;'>Grupo Hormesis · Sistematización Empresarial e Inteligencia Artificial</p>
+    <p style='margin: 0; color: #94a3b8; font-size: 12px;'><a href='https://grupohormesis.es' style='color: #34d399; text-decoration: none; font-weight: 600;'>grupohormesis.es</a></p>
+  </div>
+</div>`;
+}
+
 class FormContactWorkflow extends BaseWorkflowType {
   typeIdentifier = 'form_contact_handler';
 
@@ -2449,19 +2510,28 @@ class FormContactWorkflow extends BaseWorkflowType {
     }
 
     const config = context.workflow.config as any;
+    const servicesField = config?.fieldMappings?.servicesField || 'service';
+    const nameField = config?.fieldMappings?.nameField || 'name';
+    const emailField = config?.fieldMappings?.emailField || 'email';
 
-    context.log(`Procesando lead: ${data.name} (${data.email}) - Servicio: ${data.service}`);
+    const contactName = data[nameField] || data.name || data.nombre || 'Cliente';
+    const contactEmail = data[emailField] || data.email || data.correo || '';
+    const rawService = data[servicesField] || data.service || data.servicio || data.interest || '';
+
+    context.log(`Procesando lead: ${contactName} (${contactEmail}) - Servicio: ${rawService}`);
 
     const normalizeStr = (str: string) => 
       (str || '').toString().toLowerCase().trim().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
 
-    const requestedService = normalizeStr(data.service);
+    const requestedService = normalizeStr(rawService);
     const templates = config?.generated_responses || {};
     let matchedTemplate: any = null;
+    let matchedServiceKey = rawService || 'Consultoría y Soluciones Digitales';
     
     for (const [key, template] of Object.entries(templates)) {
-      if (normalizeStr(key) === requestedService) {
+      if (normalizeStr(key) === requestedService || (requestedService && normalizeStr(key).includes(requestedService))) {
         matchedTemplate = template;
+        matchedServiceKey = key;
         break;
       }
     }
@@ -2469,39 +2539,69 @@ class FormContactWorkflow extends BaseWorkflowType {
     // Si no hay coincidencia exacta (o si no se envió servicio), tomar 'default' o la primera disponible
     if (!matchedTemplate) {
       context.log(`No se encontró coincidencia exacta para "${requestedService}". Usando plantilla por defecto.`);
-      matchedTemplate = templates['default'] || Object.values(templates)[0];
+      const firstEntry = Object.entries(templates)[0];
+      if (templates['default']) {
+        matchedTemplate = templates['default'];
+      } else if (firstEntry) {
+        matchedServiceKey = firstEntry[0];
+        matchedTemplate = firstEntry[1];
+      }
     }
 
     if (!matchedTemplate) {
       throw new Error('No hay respuestas pre-generadas configuradas en este workflow. Por favor, generalas desde el panel de control.');
     }
 
-    let clientSubject = matchedTemplate.subject || `[${context.workflow.name}] Tu solicitud`;
-    let clientBody = matchedTemplate.body || '';
+    // Resolver URL del calendario público para agendar reunión
+    const frontendUrl = getFrontendUrl();
+    let calendarId = config?.calendarId;
+    if (!calendarId) {
+      const userCal = await prisma.calendar.findFirst({ where: { userId: context.workflow.userId }, select: { id: true } });
+      calendarId = userCal?.id;
+    }
+    if (!calendarId) {
+      const anyCal = await prisma.calendar.findFirst({ select: { id: true } });
+      calendarId = anyCal?.id;
+    }
+    const bookingUrl = calendarId
+      ? `${frontendUrl}/book/${calendarId}${data.leadId ? `?ref=${data.leadId}` : ''}`
+      : `${frontendUrl}/contacto`;
+
+    let clientSubject = matchedTemplate.subject || `Propuesta e Información: ${matchedServiceKey} | Grupo Hormesis`;
+    let clientBody = ensureExecutiveFormEmailHtml(
+      matchedTemplate.body || '',
+      matchedServiceKey,
+      bookingUrl
+    );
 
     // Reemplazar variables tanto en el asunto como en el cuerpo
-    const variables = {
-      '{{name}}': data.name || '',
-      '[Nombre]': data.name || '',
-      '{{email}}': data.email || '',
-      '{{businessName}}': data.businessName || '',
-      '{{service}}': data.service || '',
-      '{{message}}': data.message || ''
+    const variables: Record<string, string> = {
+      '{{name}}': contactName,
+      '[Nombre]': contactName,
+      '{{email}}': contactEmail,
+      '[Email]': contactEmail,
+      '{{businessName}}': data.businessName || data.company || data.empresa || 'tu empresa',
+      '[Empresa]': data.businessName || data.company || data.empresa || 'tu empresa',
+      '{{service}}': matchedServiceKey,
+      '[Servicio]': matchedServiceKey,
+      '{{message}}': data.message || data.mensaje || '',
+      '{{bookingUrl}}': bookingUrl,
+      '[Link_Calendario]': bookingUrl
     };
 
     for (const [key, value] of Object.entries(variables)) {
       const safeKey = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      clientSubject = clientSubject.replace(new RegExp(safeKey, 'g'), value as string);
-      clientBody = clientBody.replace(new RegExp(safeKey, 'g'), value as string);
+      clientSubject = clientSubject.replace(new RegExp(safeKey, 'g'), value);
+      clientBody = clientBody.replace(new RegExp(safeKey, 'g'), value);
     }
 
     context.log(`Enviando correo con asunto: ${clientSubject}`);
 
     // Validar entregabilidad del correo antes de enviar auto-respuesta
-    if (data.email) {
-      const emailValidation = await EmailValidatorService.validateEmail(data.email);
+    if (contactEmail) {
+      const emailValidation = await EmailValidatorService.validateEmail(contactEmail);
       if (!emailValidation.isValid) {
-        context.log(`Aviso: Correo de formulario descartado (${data.email}): ${emailValidation.reason}. Omitiendo envío para evitar rebotes.`);
+        context.log(`Aviso: Correo de formulario descartado (${contactEmail}): ${emailValidation.reason}. Omitiendo envío para evitar rebotes.`);
         return { message: 'Correo de formulario inválido, omitido', reason: emailValidation.reason };
       }
     }
@@ -2522,8 +2622,8 @@ class FormContactWorkflow extends BaseWorkflowType {
     });
 
     await transporter.sendMail({
-      from: `"${context.workflow.name}" <${gmailAddress}>`,
-      to: data.email,
+      from: `"Grupo Hormesis" <${gmailAddress}>`,
+      to: contactEmail,
       subject: clientSubject,
       text: clientBody.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim(),
       html: clientBody
