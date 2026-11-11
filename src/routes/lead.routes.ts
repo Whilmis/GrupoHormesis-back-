@@ -3,9 +3,174 @@ import { getLeadActivities, createLeadActivity, getColaboradorLeads, updateLeadS
 import { requireAuth } from '../middlewares/auth.middleware';
 import prisma from '../config/db';
 import { extractBrandAssets, generateConceptualDesignHtml, sanitizeAndGuardMockupHtml, getFrontendUrl } from '../services/execution.engine';
-import { getDesignTrendKnowledge } from '../services/design-trends.service';
+import { getDesignTrendKnowledge, detectNiche } from '../services/design-trends.service';
+import {
+  renderCulinaryHospitalityHtml,
+  detectCulinarySubtype,
+  getDefaultCulinaryContent,
+  getCuratedCulinaryImages
+} from '../services/culinary-template.service';
+import { enrichLeadWithGooglePlace } from '../services/place-enrichment.service';
 
 const router = Router();
+
+function isCorruptedMockup(html?: string): boolean {
+  if (!html || typeof html !== 'string' || html.length < 200) return true;
+  return (
+    html.includes('Soluciones Empresariales') ||
+    html.includes('Consultar con Expertos') ||
+    html.includes('Elevamos el estándar corporativo') ||
+    html.includes('Excelencia y Liderazgo Empresarial en España')
+  );
+}
+
+export async function regenerateMockupForLead(lead: any, forceStyle?: string) {
+  const meta = typeof lead.metadata === 'string' ? JSON.parse(lead.metadata) : (lead.metadata || {});
+  const leadName = lead.businessName || lead.contactName || 'Empresa';
+  const website = lead.website || '';
+  
+  const nicheSearch = [
+    leadName,
+    website,
+    meta.niche,
+    meta.category,
+    meta.searchQuery,
+    Array.isArray(meta.types) ? meta.types.join(' ') : ''
+  ].filter(Boolean).join(' ');
+
+  const detected = detectNiche(nicheSearch, leadName);
+  const isCulinary = 
+    forceStyle === 'culinary_hospitality' ||
+    meta.designStyle === 'culinary_hospitality' ||
+    detected === 'restaurantes' ||
+    detected === 'turismo' ||
+    /restauran|bar\b|cafet|tapas|asador|marisc|pizz|hotel|hostal|hosped|gastron|hosteler|bistrot|sushi|cervecer/i.test(nicheSearch);
+
+  const brandAssets = await extractBrandAssets(website, leadName, lead.id, '', meta);
+
+  if (isCulinary) {
+    const subtype = detectCulinarySubtype(nicheSearch);
+    const googleMapsKey = meta.googleMapsKey || process.env.GOOGLE_MAPS_API_KEY || '';
+    
+    let placeData: any = null;
+    try {
+      placeData = await enrichLeadWithGooglePlace(
+        { businessName: leadName, website, phone: lead.phone || meta.phone },
+        meta,
+        googleMapsKey,
+        (msg: string) => console.log('[Mockup Regen]', msg),
+        meta.address || 'España'
+      );
+    } catch (placeErr: any) {
+      console.warn('[Mockup Regen] Falló enriquecimiento Places:', placeErr.message);
+    }
+
+    const baseContent = getDefaultCulinaryContent(subtype, leadName, meta.address || placeData?.address || 'España');
+    const photos = (placeData?.photos && placeData.photos.length > 0)
+      ? placeData.photos
+      : [];
+
+    const generatedHtml = renderCulinaryHospitalityHtml({
+      leadName,
+      websiteUrl: website,
+      brandPalette: brandAssets.palette,
+      logoUrl: brandAssets.images.logo,
+      leadPhone: (lead.phone && !/no disponible/i.test(lead.phone)) ? lead.phone : (placeData?.phone || ''),
+      leadAddress: meta.address || placeData?.address || 'España',
+      leadRating: typeof meta.rating === 'number' ? meta.rating : (placeData?.rating || 4.9),
+      totalRatings: typeof meta.userRatingsTotal === 'number' ? meta.userRatingsTotal : (placeData?.userRatingsTotal || 120),
+      content: baseContent,
+      photos,
+      curatedPhotos: getCuratedCulinaryImages(subtype),
+      reviews: placeData?.reviews || [],
+      openingHours: placeData?.openingHours || []
+    });
+
+    const finalHtml = sanitizeAndGuardMockupHtml(generatedHtml, leadName, brandAssets.palette, brandAssets.images, brandAssets.fallbackImages, website);
+    const mockupMeta = {
+      previewHtml: finalHtml,
+      designStyle: 'culinary_hospitality',
+      layoutArchetype: 'culinary_hospitality',
+      title: `Propuesta de Rediseño · ${subtype === 'hotel' ? 'Experiencia Hotel & Suites' : 'Alta Gastronomía'} · ${leadName}`,
+      summary: `Propuesta generada con fotografías reales de Google Maps y experiencia inmersiva para ${leadName}.`
+    };
+
+    meta.generatedMockup = finalHtml;
+    meta.designStyle = 'culinary_hospitality';
+    meta.layoutArchetype = 'culinary_hospitality';
+    meta.mockupHeroImage = photos[0];
+    meta.creativeAssets = meta.creativeAssets || {};
+    meta.creativeAssets.mockup = mockupMeta;
+    if (placeData) {
+      meta.placeData = {
+        name: placeData.name,
+        photosCount: placeData.photos.length,
+        reviewsCount: placeData.reviews.length,
+        rating: placeData.rating
+      };
+    }
+
+    await prisma.lead.update({
+      where: { id: lead.id },
+      data: { metadata: meta }
+    });
+
+    return { html: finalHtml, mockup: mockupMeta };
+  } else {
+    const designTrend = getDesignTrendKnowledge(nicheSearch, brandAssets.layoutArchetype);
+    const rawHtml = generateConceptualDesignHtml(
+      leadName,
+      website,
+      brandAssets.palette,
+      brandAssets.images,
+      brandAssets.fallbackImages,
+      brandAssets.layoutArchetype,
+      lead.phone || meta.phone || '',
+      meta.address || 'España',
+      meta.rating || 4.9,
+      meta,
+      designTrend
+    );
+    const finalHtml = sanitizeAndGuardMockupHtml(rawHtml, leadName, brandAssets.palette, brandAssets.images, brandAssets.fallbackImages, website);
+    const mockupMeta = {
+      previewHtml: finalHtml,
+      designStyle: brandAssets.layoutArchetype,
+      layoutArchetype: brandAssets.layoutArchetype,
+      title: `Propuesta de Rediseño · ${leadName}`,
+      summary: `Propuesta conceptual de alta gama para ${leadName}.`
+    };
+
+    meta.generatedMockup = finalHtml;
+    meta.mockupHeroImage = brandAssets.images.hero;
+    meta.creativeAssets = meta.creativeAssets || {};
+    meta.creativeAssets.mockup = mockupMeta;
+
+    await prisma.lead.update({
+      where: { id: lead.id },
+      data: { metadata: meta }
+    });
+
+    return { html: finalHtml, mockup: mockupMeta };
+  }
+}
+
+// RUTA PÚBLICA PARA FORZAR REGENERACIÓN DE PROPUESTA (IDEAL PARA BOTÓN EN UI O ENLACE DIRECTO)
+router.post('/public/:leadId/regenerate-mockup', async (req, res) => {
+  try {
+    const { leadId } = req.params;
+    const { designStyle } = req.body || {};
+    const lead = await prisma.lead.findUnique({
+      where: { id: leadId },
+      include: { project: { select: { userId: true } } }
+    });
+    if (!lead) return res.status(404).json({ error: 'Lead no encontrado' });
+
+    const result = await regenerateMockupForLead(lead, designStyle);
+    return res.json({ success: true, mockup: result.mockup });
+  } catch (err: any) {
+    return res.status(500).json({ error: 'Error regenerando propuesta: ' + err.message });
+  }
+});
 
 // RUTA PÚBLICA LIGERA PARA PRE-RELLENAR NOMBRE/CORREO Y RESOLVER CALENDARIO (SIN JWT EN URL)
 router.get('/public/:leadId/summary', async (req, res) => {
@@ -165,35 +330,20 @@ router.get('/public/:leadId/mockup', async (req, res) => {
 
     const meta = typeof lead.metadata === 'string' ? JSON.parse(lead.metadata) : (lead.metadata || {});
     let html = meta.generatedMockup || meta.creativeAssets?.mockup?.previewHtml;
+    const force = req.query.force === '1' || req.query.force === 'true';
 
     const leadName = lead.businessName || lead.contactName || 'Empresa';
     const brandAssets = await extractBrandAssets(lead.website || '', leadName, lead.id, '', meta);
 
-    if (!html) {
+    if (!html || force || isCorruptedMockup(html)) {
       try {
-        const designTrend = getDesignTrendKnowledge((lead as any).notes || meta?.niche || meta?.category || leadName, brandAssets.layoutArchetype);
-        const rawHtml = generateConceptualDesignHtml(
-          leadName,
-          lead.website || '',
-          brandAssets.palette,
-          brandAssets.images,
-          brandAssets.fallbackImages,
-          brandAssets.layoutArchetype,
-          lead.phone || (meta as any).phone || '',
-          (meta as any).address || 'España',
-          (meta as any).rating || 4.9,
-          meta,
-          designTrend
-        );
-        html = sanitizeAndGuardMockupHtml(rawHtml, leadName, brandAssets.palette, brandAssets.images, brandAssets.fallbackImages, lead.website || '');
-        meta.generatedMockup = html;
-        meta.mockupHeroImage = brandAssets.images.hero;
-        await prisma.lead.update({
-          where: { id: lead.id },
-          data: { metadata: meta }
-        });
+        const result = await regenerateMockupForLead(lead);
+        html = result.html;
       } catch (genErr: any) {
-        return res.status(500).send('Error generando maqueta: ' + genErr.message);
+        console.error('[Mockup Route] Error regenerando maqueta:', genErr);
+        if (!html) {
+          return res.status(500).send('Error generando maqueta: ' + genErr.message);
+        }
       }
     } else {
       // Asegurar que cualquier HTML previamente guardado pase por los nuevos guardrails anti-desbordamiento y contraste
@@ -248,5 +398,23 @@ router.put('/:leadId/status', updateLeadStatus);
 
 router.get('/:leadId/activities', getLeadActivities);
 router.post('/:leadId/activities', createLeadActivity);
+
+// Regeneración de propuesta bajo demanda (CRM / Admin)
+router.post('/:leadId/regenerate-mockup', async (req, res) => {
+  try {
+    const { leadId } = req.params;
+    const { designStyle } = req.body || {};
+    const lead = await prisma.lead.findUnique({
+      where: { id: leadId },
+      include: { project: { select: { userId: true } } }
+    });
+    if (!lead) return res.status(404).json({ error: 'Lead no encontrado' });
+
+    const result = await regenerateMockupForLead(lead, designStyle);
+    return res.json({ success: true, mockup: result.mockup });
+  } catch (err: any) {
+    return res.status(500).json({ error: 'Error regenerando propuesta: ' + err.message });
+  }
+});
 
 export default router;
