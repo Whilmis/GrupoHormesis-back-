@@ -1,10 +1,8 @@
 import { Request, Response } from 'express';
 import prisma from '../config/db';
 import { CredentialService } from '../services/credential.service';
-import { ExecutionEngine, ensureExecutiveFormEmailHtml } from '../services/execution.engine';
+import { ExecutionEngine, ensureExecutiveFormEmailHtml, extractBusinessNameFromText, extractBrandColors } from '../services/execution.engine';
 import { CronService } from '../services/cron.service';
-
-
 
 export const workflowController = {
   // --- TEMPLATES ---
@@ -25,39 +23,6 @@ export const workflowController = {
         where: { userId },
         include: { template: true, credentials: true }
       });
-
-      for (const wf of workflows) {
-        if (wf.template?.code === 'form_contact_handler' && wf.config && typeof wf.config === 'object') {
-          const cfg = wf.config as any;
-          if (cfg.generated_responses && typeof cfg.generated_responses === 'object') {
-            let needsUpgrade = false;
-            const upgradedResponses: Record<string, any> = { ...cfg.generated_responses };
-            for (const [srvKey, srvVal] of Object.entries(cfg.generated_responses)) {
-              const entry = (srvVal || {}) as any;
-              const oldBody = String(entry.body || '');
-              const oldSubject = String(entry.subject || '');
-              const newBody = ensureExecutiveFormEmailHtml(oldBody, srvKey, cfg.businessContext || '');
-              const isLegacySubject = !oldSubject || /idea r[aá]pida/i.test(oldSubject);
-              const newSubject = isLegacySubject
-                ? `Propuesta Estratégica y Hoja de Ruta: ${srvKey.toUpperCase()} | Grupo Hormesis`
-                : oldSubject;
-              if (newBody !== oldBody || newSubject !== oldSubject) {
-                upgradedResponses[srvKey] = { ...entry, subject: newSubject, body: newBody };
-                needsUpgrade = true;
-              }
-            }
-            if (needsUpgrade) {
-              const updatedConfig = { ...cfg, generated_responses: upgradedResponses };
-              (wf as any).config = updatedConfig;
-              await prisma.userWorkflow.update({
-                where: { id: wf.id },
-                data: { config: updatedConfig }
-              }).catch(() => {});
-            }
-          }
-        }
-      }
-
       res.json(workflows);
     } catch (error) {
       res.status(500).json({ error: 'Error obteniendo workflows del usuario' });
@@ -406,7 +371,7 @@ export const workflowController = {
     log('=== INICIANDO GENERATE TEMPLATES (MODO RÁPIDO PARALELO) ===');
 
     try {
-      const { business_context, services, groqCredentialId, brandVoice } = req.body;
+      const { business_context, business_name, brand_voice, services, groqCredentialId } = req.body;
       const userId = (req as any).user.id;
       let apiKeyToUse = process.env.GROQ_API_KEY;
       if (groqCredentialId) {
@@ -430,39 +395,52 @@ export const workflowController = {
         ? services.map((s: any) => String(s).trim()).filter(Boolean)
         : [];
       const isOutreachMode =
-        Boolean(brandVoice) ||
-        req.body.mode === 'outreach' ||
-        (serviceList.length === 1 && serviceList[0] === 'Propuesta de Negocios');
+        Boolean(brand_voice || req.body.brandVoice) &&
+        (req.body.mode === 'outreach' || (serviceList.length === 1 && serviceList[0] === 'Propuesta de Negocios'));
 
-      const buildExecutiveHtmlFromStructured = (serviceName: string, data: any, mailtoHref: string): string => {
-        const badge = data?.badge || 'GRUPO HORMESIS · SOLUCIÓN ESPECIALIZADA';
-        const headline = data?.headline || `Propuesta Estratégica: ${serviceName}`;
-        const subtitle = data?.subtitle || 'Diagnóstico y hoja de ruta preparada para [Nombre]';
+      const brandVoiceText = brand_voice || req.body.brandVoice || '';
+      const companyName =
+        business_name ||
+        req.body.businessName ||
+        extractBusinessNameFromText(business_context, 'Nuestra Empresa');
+      const colors = extractBrandColors(brandVoiceText || business_context);
+
+      const buildExecutiveHtmlFromStructured = (
+        serviceName: string,
+        data: any,
+        bookingUrl: string = '[Link_Calendario]'
+      ): string => {
+        const comp = data?.companyName || companyName;
+        const primary = data?.primaryColor || colors.primary;
+        const accent = data?.accentColor || colors.accent;
+        const badge = data?.badge || `${comp.toUpperCase()} · PROPUESTA ESTRATÉGICA`;
+        const headline = data?.headline || `Propuesta: ${serviceName}`;
+        const subtitle = data?.subtitle || 'Diagnóstico y propuesta personalizada para [Nombre]';
         const p1 =
           data?.introParagraph1 ||
-          `Hola <strong style='color: #0f172a;'>[Nombre]</strong>, hemos recibido tu solicitud sobre <strong style='color: #0f172a;'>${serviceName}</strong> y nuestro equipo de ingeniería ha analizado cómo estructurar una solución de alto impacto para tu negocio.`;
+          `Hola <strong style='color: ${primary};'>[Nombre]</strong>, hemos recibido tu solicitud sobre <strong style='color: ${primary};'>${serviceName}</strong> en ${comp}.`;
         const p2 =
           data?.introParagraph2 ||
-          `En Grupo Hormesis diseñamos e implementamos arquitecturas tecnológicas pensadas para eliminar fricciones operativas, acelerar tiempos de respuesta y multiplicar la rentabilidad de cada proceso.`;
-        const valueBoxTitle = data?.valueBoxTitle || `⚡ ¿Qué logramos con nuestra solución de ${serviceName}?`;
+          `En ${comp} nos especializamos en ofrecer soluciones diseñadas a medida para optimizar tus resultados y maximizar el rendimiento de tu inversión.`;
+        const valueBoxTitle = data?.valueBoxTitle || `⚡ ¿Por qué elegir ${comp} para ${serviceName}?`;
         const benefits: Array<{ icon?: string; title?: string; desc?: string }> =
           Array.isArray(data?.benefits) && data.benefits.length > 0
             ? data.benefits
             : [
                 {
                   icon: '✅',
-                  title: 'Arquitectura 100% a Medida',
-                  desc: `Adaptamos cada flujo e integración de ${serviceName} a la operativa real de tu empresa.`
+                  title: 'Solución 100% a Medida',
+                  desc: `Adaptamos cada aspecto de ${serviceName} a las necesidades específicas de tu negocio.`
                 },
                 {
                   icon: '⚡',
-                  title: 'Automatización y Ahorro Operativo',
-                  desc: 'Eliminamos tareas manuales repetitivas y cuellos de botella desde la primera semana.'
+                  title: 'Eficiencia y Resultados Ágiles',
+                  desc: 'Eliminamos fricciones y aceleramos tiempos de respuesta desde el primer momento.'
                 },
                 {
                   icon: '📈',
-                  title: 'Enfoque Directo en Conversión y ROI',
-                  desc: 'Métricas claras de rendimiento, escalabilidad garantizada y retorno de inversión medible.'
+                  title: 'Garantía y Acompañamiento',
+                  desc: 'Atención cercana, comunicación continua y enfoque absoluto en satisfacción y ROI.'
                 }
               ];
         const steps: Array<{ title?: string; desc?: string }> =
@@ -470,27 +448,27 @@ export const workflowController = {
             ? data.steps
             : [
                 {
-                  title: '1. Sesión de Diagnóstico (15 min)',
-                  desc: 'Evaluamos tu situación actual, objetivos de negocio y requerimientos técnicos.'
+                  title: '1. Diagnóstico Inicial',
+                  desc: 'Evaluamos tu situación actual y objetivos clave sin compromiso.'
                 },
                 {
-                  title: '2. Diseño de Arquitectura y Propuesta',
-                  desc: 'Definimos el alcance exacto, cronograma de entregas y proyección de retorno.'
+                  title: '2. Propuesta & Plan de Acción',
+                  desc: 'Definimos el alcance, plazos de entrega y presupuesto personalizado.'
                 },
                 {
-                  title: '3. Implementación Ágil y Escalado',
-                  desc: 'Despliegue sin interrumpir tu operación actual y acompañamiento técnico continuo.'
+                  title: '3. Ejecución y Soporte',
+                  desc: 'Despliegue ágil con garantía técnica y acompañamiento profesional.'
                 }
               ];
         const guarantee =
           data?.guarantee ||
-          'Confidencialidad absoluta, soporte directo de ingeniería y arquitectura diseñada para escalar.';
+          'Compromiso de calidad, total confidencialidad y garantía de satisfacción.';
 
         const benefitsHtml = benefits
           .map(
             (b) =>
               `<div style='margin-bottom: 12px; padding-bottom: 12px; border-bottom: 1px solid #e2e8f0;'>
-                <div style='font-size: 14.5px; font-weight: 700; color: #0f172a; margin-bottom: 3px;'>${b.icon || '✅'} ${b.title || 'Beneficio Clave'}</div>
+                <div style='font-size: 14.5px; font-weight: 700; color: ${primary}; margin-bottom: 3px;'>${b.icon || '✅'} ${b.title || 'Beneficio Clave'}</div>
                 <div style='font-size: 13.5px; color: #475569; line-height: 1.55;'>${b.desc || ''}</div>
               </div>`
           )
@@ -500,40 +478,42 @@ export const workflowController = {
           .map(
             (s) =>
               `<div style='margin-bottom: 10px; font-size: 13.5px; color: #334155; line-height: 1.5;'>
-                <strong style='color: #0f172a;'>${s.title || 'Paso'}:</strong> ${s.desc || ''}
+                <strong style='color: ${primary};'>${s.title || 'Paso'}:</strong> ${s.desc || ''}
               </div>`
           )
           .join('');
 
+        const ctaBooking = data?.ctaBookingText || '📅 Agendar Llamada o Cita (15 min)';
+        const footerComp = data?.footerCompany || comp;
+
         return `<div style='max-width: 640px; margin: 0 auto; font-family: -apple-system, BlinkMacSystemFont, Segoe UI, Inter, Helvetica, Arial, sans-serif; background: #ffffff; border-radius: 14px; overflow: hidden; border: 1px solid #e2e8f0; box-shadow: 0 12px 32px rgba(15, 23, 42, 0.08); color: #1e293b;'>
-  <div style='background: #0f172a; border-top: 4px solid #10b981; padding: 32px 28px;'>
-    <span style='display: inline-block; background: rgba(16, 185, 129, 0.18); color: #34d399; font-size: 11px; font-weight: 700; letter-spacing: 1.2px; text-transform: uppercase; padding: 5px 12px; border-radius: 9999px; border: 1px solid rgba(52, 211, 153, 0.3);'>${badge}</span>
+  <div style='background: ${primary}; border-top: 4px solid ${accent}; padding: 32px 28px;'>
+    <span style='display: inline-block; background: rgba(255, 255, 255, 0.15); color: #ffffff; font-size: 11px; font-weight: 700; letter-spacing: 1.2px; text-transform: uppercase; padding: 5px 12px; border-radius: 9999px; border: 1px solid rgba(255, 255, 255, 0.25);'>${badge}</span>
     <h1 style='color: #ffffff; font-size: 22px; font-weight: 800; margin: 14px 0 6px 0; line-height: 1.3;'>${headline}</h1>
-    <p style='color: #94a3b8; font-size: 14px; margin: 0; line-height: 1.5;'>${subtitle}</p>
+    <p style='color: #cbd5e1; font-size: 14px; margin: 0; line-height: 1.5;'>${subtitle}</p>
   </div>
   <div style='padding: 28px;'>
     <p style='font-size: 15px; color: #334155; line-height: 1.7; margin: 0 0 14px 0;'>${p1}</p>
     <p style='font-size: 15px; color: #334155; line-height: 1.7; margin: 0 0 22px 0;'>${p2}</p>
-    <div style='background: #f8fafc; border-left: 4px solid #10b981; border-radius: 8px; padding: 20px 22px; margin: 24px 0;'>
-      <h3 style='margin: 0 0 14px 0; color: #0f172a; font-size: 16px; font-weight: 700;'>${valueBoxTitle}</h3>
+    <div style='background: #f8fafc; border-left: 4px solid ${accent}; border-radius: 8px; padding: 20px 22px; margin: 24px 0;'>
+      <h3 style='margin: 0 0 14px 0; color: ${primary}; font-size: 16px; font-weight: 700;'>${valueBoxTitle}</h3>
       ${benefitsHtml}
     </div>
     <div style='background: #ffffff; border: 1px solid #e2e8f0; border-radius: 10px; padding: 20px 22px; margin: 22px 0;'>
-      <h4 style='margin: 0 0 12px 0; color: #0f172a; font-size: 14px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px;'>📋 Hoja de Ruta de Implementación</h4>
+      <h4 style='margin: 0 0 12px 0; color: ${primary}; font-size: 14px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px;'>📋 Hoja de Ruta</h4>
       ${stepsHtml}
     </div>
-    <div style='background: #ecfdf5; border: 1px solid #a7f3d0; border-radius: 8px; padding: 14px 18px; color: #065f46; font-size: 13px; margin-bottom: 24px; line-height: 1.5;'>
-      🔒 <strong>Garantía Grupo Hormesis:</strong> ${guarantee}
+    <div style='background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 14px 18px; color: #334155; font-size: 13px; margin-bottom: 24px; line-height: 1.5;'>
+      🔒 <strong>Compromiso ${comp}:</strong> ${guarantee}
     </div>
     <div style='text-align: center; padding: 24px 20px; background: #f8fafc; border-radius: 12px; border: 1px solid #e2e8f0;'>
-      <p style='margin: 0 0 16px 0; color: #0f172a; font-size: 15px; font-weight: 700;'>¿Evaluamos cómo aplicarlo a tu negocio en una sesión de 15 minutos?</p>
-      <a href='[Link_Calendario]' target='_blank' style='display: inline-block; background: #10b981; color: #ffffff; padding: 14px 26px; border-radius: 8px; font-weight: 700; font-size: 14px; text-decoration: none; margin: 6px; box-shadow: 0 4px 12px rgba(16, 185, 129, 0.3);'>📅 Agendar Llamada de Diagnóstico (15 min)</a>
-      <a href='${mailtoHref}' style='display: inline-block; background: #0f172a; color: #ffffff; padding: 13px 22px; border-radius: 8px; font-weight: 600; font-size: 13px; text-decoration: none; margin: 6px;'>✉️ Responder con Detalles por Correo</a>
+      <p style='margin: 0 0 16px 0; color: ${primary}; font-size: 15px; font-weight: 700;'>¿Deseas evaluar tu caso directamente con nosotros?</p>
+      <a href='${bookingUrl}' target='_blank' style='display: inline-block; background: ${accent}; color: #ffffff; padding: 14px 26px; border-radius: 8px; font-weight: 700; font-size: 14px; text-decoration: none; margin: 6px; box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);'>${ctaBooking}</a>
+      <a href='mailto:?subject=${encodeURIComponent('Consulta sobre ' + serviceName + ' - ' + comp)}' style='display: inline-block; background: ${primary}; color: #ffffff; padding: 13px 22px; border-radius: 8px; font-weight: 600; font-size: 13px; text-decoration: none; margin: 6px;'>✉️ Responder por Correo</a>
     </div>
   </div>
-  <div style='background: #0f172a; padding: 20px 28px; text-align: center; border-top: 1px solid #1e293b;'>
-    <p style='margin: 0 0 4px 0; color: #f8fafc; font-size: 13px; font-weight: 700;'>Grupo Hormesis · Sistematización Empresarial e Inteligencia Artificial</p>
-    <p style='margin: 0; color: #94a3b8; font-size: 12px;'><a href='https://grupohormesis.es' style='color: #34d399; text-decoration: none; font-weight: 600;'>grupohormesis.es</a></p>
+  <div style='background: ${primary}; padding: 18px 28px; text-align: center; border-top: 1px solid rgba(255, 255, 255, 0.1);'>
+    <p style='margin: 0; color: #f8fafc; font-size: 13px; font-weight: 700;'>${footerComp}</p>
   </div>
 </div>`;
       };
@@ -541,52 +521,64 @@ export const workflowController = {
       const modelsCascade = ['llama-3.3-70b-versatile', 'openai/gpt-oss-120b', 'llama-3.1-8b-instant'];
 
       const generateForSingleService = async (service: string, idx: number): Promise<[string, { subject: string; body: string }]> => {
-        const mailtoBody = `Hola equipo de Grupo Hormesis,\n\nHe recibido su propuesta inicial sobre ${service} y me gustaría avanzar con la Llamada de Diagnóstico (15 min).\n\n- Principal reto o necesidad actual:\n[Escribe brevemente aquí...]\n\nSaludos,\n[Nombre]`;
-        const mailtoHref = `mailto:ventas@grupohormesis.com?subject=${encodeURIComponent('Diagnóstico de Proyecto - ' + service)}&body=${encodeURIComponent(mailtoBody)}`;
-
         const prompt = isOutreachMode
-          ? `Eres un Master Copywriter B2B. Crea un Cold Email breve en HTML para ofrecer "${service}".
-Contexto de Grupo Hormesis: "${business_context}"
-Reglas:
-1. Asunto corto (4-7 palabras).
-2. Gancho directo sobre su web y una línea de diseño conceptual preparada para su negocio.
-3. Menciona 2-3 oportunidades técnicas clave.
+          ? `Eres un Copywriter experto en captación B2B para la empresa "${companyName}".
+Contexto de la empresa: "${business_context}"
+Tono y Línea de Color: "${brandVoiceText || 'Profesional y persuasivo'}"
+Servicio ofrecido: "${service}"
+
+Crea un Cold Email persuasivo en HTML para ofrecer "${service}".
+REGLAS ESTRICTAS:
+1. Representas ÚNICAMENTE a "${companyName}". NUNCA menciones a Grupo Hormesis ni empresas externas que no pertenezcan al contexto dado.
+2. Asunto corto (4-7 palabras).
+3. Gancho directo y 2-3 oportunidades de valor para el cliente.
 4. Usa comillas simples (') en atributos HTML y [Nombre] para el cliente.
 Devuelve SOLO un JSON válido:
 {
-  "subject": "Asunto corto",
+  "subject": "Asunto magnético corto",
   "body": "<p style='font-size: 15px; color: #334155; margin-bottom: 12px;'>...</p><ul style='color: #475569;'><li>...</li></ul>"
 }`
-          : `Eres un Director de Consultoría B2B de Grupo Hormesis.
-Un cliente potencial acaba de solicitar información en nuestro formulario web sobre el servicio: "${service}".
-Contexto de nuestra empresa (Grupo Hormesis): "${business_context}"
+          : `Eres el Director Comercial y Consultor Estratégico de la empresa "${companyName}".
+Contexto del negocio y servicios: "${business_context}"
+Línea de Color / Identidad Visual: "${brandVoiceText || 'Profesional acorde al sector'}"
+Servicio solicitado: "${service}"
 
-Redacta el contenido estratégico y altamente persuasivo para responderle sobre "${service}".
-Usa [Nombre] para referirte al cliente. NO uses comillas dobles internas que rompan el JSON.
-Devuelve ÚNICAMENTE un objeto JSON válido con esta estructura exacta:
+Un cliente potencial ([Nombre]) ha solicitado información en el formulario web sobre el servicio "${service}".
+Redacta una respuesta comercial ejecutiva y de alto valor adaptada 100% a la propuesta de valor y tono de "${companyName}".
+
+REGLAS OBLIGATORIAS:
+1. El correo es emitido por "${companyName}". NUNCA menciones a Grupo Hormesis ni a ninguna entidad ajena al contexto del negocio.
+2. Propón la paleta de colores para este negocio:
+   - "primaryColor": color hexadecimal oscuro para fondo de cabecera y botones secundarios (ej: '#0f172a', '#1e3a8a', '#18181b', '#1e293b', etc.)
+   - "accentColor": color hexadecimal vibrante para acentos y botón principal (ej: '#10b981', '#2563eb', '#f59e0b', '#7c3aed', '#0284c7', etc.)
+3. Usa [Nombre] para el cliente. NO uses comillas dobles internas en textos que rompan el JSON.
+4. Devuelve ÚNICAMENTE un objeto JSON válido con esta estructura exacta:
 {
-  "subject": "Asunto ejecutivo, cercano y de alto valor sobre ${service} (6-10 palabras)",
-  "badge": "GRUPO HORMESIS · SOLUCIÓN ESPECIALIZADA",
-  "headline": "Título ejecutivo potente enfocado en transformar su área de ${service}",
-  "subtitle": "Propuesta estratégica e información clave preparada para [Nombre]",
-  "introParagraph1": "Saludo cercano a [Nombre] confirmando su solicitud sobre ${service} y conectando con el principal dolor o reto que sufren las empresas en esta área.",
-  "introParagraph2": "Segundo párrafo consultivo explicando cómo Grupo Hormesis resuelve este reto combinando ingeniería a medida, IA y enfoque en rentabilidad.",
-  "valueBoxTitle": "⚡ Impacto directo al implementar nuestra solución de ${service}",
+  "companyName": "${companyName}",
+  "primaryColor": "${colors.primary}",
+  "accentColor": "${colors.accent}",
+  "subject": "Asunto personalizado y magnético sobre ${service} (6-10 palabras)",
+  "badge": "${companyName.toUpperCase()} · PROPUESTA PERSONALIZADA",
+  "headline": "Título potente enfocado en ${service}",
+  "subtitle": "Información y propuesta preparada para [Nombre]",
+  "introParagraph1": "Saludo a [Nombre] confirmando su solicitud sobre ${service} y destacando el objetivo principal.",
+  "introParagraph2": "Segundo párrafo explicando cómo ${companyName} resuelve su necesidad con excelencia y garantías.",
+  "valueBoxTitle": "⚡ Ventajas clave de nuestra solución de ${service}",
   "benefits": [
-    { "icon": "✅", "title": "Título del beneficio 1 específico de ${service}", "desc": "Descripción persuasiva orientada a ROI y resultados medibles." },
-    { "icon": "⚡", "title": "Título del beneficio 2 específico de ${service}", "desc": "Descripción persuasiva sobre ahorro de tiempo y eliminación de fricciones." },
-    { "icon": "📈", "title": "Título del beneficio 3 específico de ${service}", "desc": "Descripción persuasiva sobre escalabilidad y ventaja competitiva." },
-    { "icon": "🔒", "title": "Título del beneficio 4 específico de ${service}", "desc": "Descripción persuasiva sobre robustez técnica y acompañamiento." }
+    { "icon": "✅", "title": "Beneficio 1 específico", "desc": "Descripción orientada a valor y satisfacción." },
+    { "icon": "⚡", "title": "Beneficio 2 específico", "desc": "Descripción sobre rapidez, profesionalidad y resultados." },
+    { "icon": "📈", "title": "Beneficio 3 específico", "desc": "Descripción sobre garantía y confianza." }
   ],
   "steps": [
-    { "title": "1. Sesión de Diagnóstico Técnico (15 min)", "desc": "Analizamos tu caso actual y objetivos clave." },
-    { "title": "2. Arquitectura y Propuesta a Medida", "desc": "Entregamos el plan de implementación detallado con plazos y ROI." },
-    { "title": "3. Despliegue Ágil y Resultados", "desc": "Ejecución por fases con garantía técnica y soporte directo." }
+    { "title": "1. Diagnóstico / Asesoría Inicial", "desc": "Analizamos tus requerimientos particulares sin compromiso." },
+    { "title": "2. Plan de Acción y Presupuesto a Medida", "desc": "Te presentamos la propuesta detallada adaptada a tus objetivos." },
+    { "title": "3. Ejecución y Acompañamiento", "desc": "Despliegue del servicio con seguimiento cercano." }
   ],
-  "guarantee": "Confidencialidad total, arquitectura escalable diseñada a medida y enfoque 100% en retorno de inversión."
+  "guarantee": "Compromiso de calidad, atención personalizada y garantía de satisfacción.",
+  "ctaBookingText": "📅 Agendar Llamada o Cita de Consulta",
+  "footerCompany": "${companyName}"
 }`;
 
-        // Rotar el modelo inicial según el índice para repartir cuota de TPM en llamadas paralelas
         const orderedModels = [
           modelsCascade[idx % modelsCascade.length],
           ...modelsCascade.filter((_, i) => i !== idx % modelsCascade.length)
@@ -636,12 +628,18 @@ Devuelve ÚNICAMENTE un objeto JSON válido con esta estructura exacta:
                   ];
                 } else {
                   const fullHtml = parsed.body
-                    ? ensureExecutiveFormEmailHtml(parsed.body, service, '[Link_Calendario]', mailtoHref)
-                    : buildExecutiveHtmlFromStructured(service, parsed, mailtoHref);
+                    ? ensureExecutiveFormEmailHtml(parsed.body, service, '[Link_Calendario]', {
+                        companyName,
+                        businessContext: business_context,
+                        brandVoice: brandVoiceText,
+                        primaryColor: parsed.primaryColor || colors.primary,
+                        accentColor: parsed.accentColor || colors.accent
+                      })
+                    : buildExecutiveHtmlFromStructured(service, parsed, '[Link_Calendario]');
                   return [
                     service,
                     {
-                      subject: parsed.subject || `Propuesta Estratégica de ${service} | Grupo Hormesis`,
+                      subject: parsed.subject || `Propuesta e Información: ${service} | ${companyName}`,
                       body: fullHtml
                     }
                   ];
@@ -655,13 +653,13 @@ Devuelve ÚNICAMENTE un objeto JSON válido con esta estructura exacta:
           }
         }
 
-        // Fallback inmediato de alta calidad si todos los modelos están saturados
-        log(`[${service}] Usando plantilla ejecutiva estructurada de respaldo.`);
+        // Fallback de respaldo adaptado al negocio
+        log(`[${service}] Usando plantilla ejecutiva estructurada adaptada a ${companyName}.`);
         return [
           service,
           {
-            subject: `Propuesta Estratégica: ${service} para tu empresa | Grupo Hormesis`,
-            body: buildExecutiveHtmlFromStructured(service, {}, mailtoHref)
+            subject: `Propuesta e Información: ${service} | ${companyName}`,
+            body: buildExecutiveHtmlFromStructured(service, {}, '[Link_Calendario]')
           }
         ];
       };
@@ -712,17 +710,19 @@ Devuelve ÚNICAMENTE un objeto JSON válido con esta estructura exacta:
 
       const userInstruction =
         (refinement_prompt || '').trim() ||
-        'Transforma y enriquece completamente el contenido para que sea una propuesta ejecutiva B2B de máxima autoridad y conversión.';
-      const businessContextInfo = currentConfig.businessContext || 'Consultora tecnológica de sistematización e Inteligencia Artificial (Grupo Hormesis).';
+        'Transforma y enriquece completamente el contenido para que sea una propuesta ejecutiva de máxima persuasión y valor.';
+      const compName =
+        currentConfig.businessName ||
+        extractBusinessNameFromText(currentConfig.businessContext, workflow.name || 'Nuestra Empresa');
+      const brandColors = extractBrandColors(currentConfig.brandVoice || currentConfig.businessContext);
+      const businessContextInfo = currentConfig.businessContext || `Empresa: ${compName}`;
       const modelsCascade = ['llama-3.3-70b-versatile', 'openai/gpt-oss-120b', 'llama-3.1-8b-instant'];
 
       const refineSingleService = async (srvKey: string, currentTpl: any, idx: number): Promise<[string, { subject: string; body: string }]> => {
-        const mailtoBody = `Hola equipo de Grupo Hormesis,\n\nHe recibido su propuesta inicial sobre ${srvKey} y me gustaría avanzar con la Llamada de Diagnóstico (15 min).\n\nSaludos,\n[Nombre]`;
-        const mailtoHref = `mailto:ventas@grupohormesis.com?subject=${encodeURIComponent('Diagnóstico de Proyecto - ' + srvKey)}&body=${encodeURIComponent(mailtoBody)}`;
-
         const currentPlainSnippet = (currentTpl?.body || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().substring(0, 600);
-        const prompt = `Eres un Director de Consultoría B2B de Grupo Hormesis.
+        const prompt = `Eres el Director Comercial de "${compName}".
 Contexto de la empresa: "${businessContextInfo}"
+Línea de color / Identidad: "${currentConfig.brandVoice || 'Profesional'}"
 Servicio: "${srvKey}"
 Asunto actual: "${currentTpl?.subject || srvKey}"
 Resumen del contenido actual: "${currentPlainSnippet}"
@@ -731,27 +731,32 @@ INSTRUCCIÓN DE MEJORA DEL USUARIO:
 "${userInstruction}"
 
 Reescribe y mejora el contenido aplicando la instrucción del usuario para el servicio "${srvKey}". Usa [Nombre] para referirte al cliente.
+REGLA OBLIGATORIA: El correo es emitido exclusivamente por "${compName}". NUNCA menciones a Grupo Hormesis ni entidades ajenas.
 Devuelve ÚNICAMENTE un JSON válido con esta estructura exacta:
 {
-  "subject": "Asunto ejecutivo mejorado aplicando la instrucción",
-  "badge": "GRUPO HORMESIS · SOLUCIÓN ESPECIALIZADA",
+  "companyName": "${compName}",
+  "primaryColor": "${brandColors.primary}",
+  "accentColor": "${brandColors.accent}",
+  "subject": "Asunto personalizado mejorado (6-10 palabras)",
+  "badge": "${compName.toUpperCase()} · PROPUESTA ESPECIALIZADA",
   "headline": "Título ejecutivo potente enfocado en ${srvKey}",
-  "subtitle": "Propuesta estratégica preparada para [Nombre]",
+  "subtitle": "Propuesta y asesoramiento para [Nombre]",
   "introParagraph1": "Primer párrafo consultivo aplicando la mejora solicitada y saludando a [Nombre].",
-  "introParagraph2": "Segundo párrafo consultivo de autoridad técnica y enfoque en resultados.",
-  "valueBoxTitle": "⚡ Impacto directo al implementar nuestra solución de ${srvKey}",
+  "introParagraph2": "Segundo párrafo consultivo de autoridad y resultados en ${compName}.",
+  "valueBoxTitle": "⚡ Ventajas clave de nuestra solución de ${srvKey}",
   "benefits": [
-    { "icon": "✅", "title": "Beneficio clave 1", "desc": "Descripción persuasiva orientada a ROI." },
-    { "icon": "⚡", "title": "Beneficio clave 2", "desc": "Descripción persuasiva sobre eficiencia y automatización." },
-    { "icon": "📈", "title": "Beneficio clave 3", "desc": "Descripción persuasiva sobre escalabilidad." },
-    { "icon": "🔒", "title": "Beneficio clave 4", "desc": "Descripción persuasiva sobre seguridad y soporte." }
+    { "icon": "✅", "title": "Beneficio clave 1", "desc": "Descripción persuasiva." },
+    { "icon": "⚡", "title": "Beneficio clave 2", "desc": "Descripción persuasiva." },
+    { "icon": "📈", "title": "Beneficio clave 3", "desc": "Descripción persuasiva." }
   ],
   "steps": [
-    { "title": "1. Sesión de Diagnóstico Técnico (15 min)", "desc": "Analizamos tu caso actual y objetivos clave." },
-    { "title": "2. Arquitectura y Propuesta a Medida", "desc": "Entregamos el plan de implementación detallado con plazos y ROI." },
-    { "title": "3. Despliegue Ágil y Resultados", "desc": "Ejecución por fases con garantía técnica." }
+    { "title": "1. Diagnóstico Inicial", "desc": "Analizamos tus requerimientos particulares." },
+    { "title": "2. Plan de Acción y Propuesta", "desc": "Detalle de alcance y presupuesto personalizado." },
+    { "title": "3. Ejecución y Garantía", "desc": "Despliegue ágil con seguimiento." }
   ],
-  "guarantee": "Confidencialidad total, arquitectura escalable diseñada a medida y enfoque 100% en retorno de inversión."
+  "guarantee": "Compromiso de calidad, confidencialidad y garantía de satisfacción.",
+  "ctaBookingText": "📅 Agendar Llamada o Cita de Consulta",
+  "footerCompany": "${compName}"
 }`;
 
         const orderedModels = [
@@ -789,11 +794,15 @@ Devuelve ÚNICAMENTE un JSON válido con esta estructura exacta:
               const match = rawText.match(/\{[\s\S]*\}/);
               if (match) {
                 const parsed = JSON.parse(match[0]);
+                const comp = parsed.companyName || compName;
+                const primary = parsed.primaryColor || brandColors.primary;
+                const accent = parsed.accentColor || brandColors.accent;
+
                 const benefitsHtml = (Array.isArray(parsed.benefits) ? parsed.benefits : [])
                   .map(
                     (b: any) =>
                       `<div style='margin-bottom: 12px; padding-bottom: 12px; border-bottom: 1px solid #e2e8f0;'>
-                        <div style='font-size: 14.5px; font-weight: 700; color: #0f172a; margin-bottom: 3px;'>${b.icon || '✅'} ${b.title || ''}</div>
+                        <div style='font-size: 14.5px; font-weight: 700; color: ${primary}; margin-bottom: 3px;'>${b.icon || '✅'} ${b.title || ''}</div>
                         <div style='font-size: 13.5px; color: #475569; line-height: 1.55;'>${b.desc || ''}</div>
                       </div>`
                   )
@@ -802,47 +811,46 @@ Devuelve ÚNICAMENTE un JSON válido con esta estructura exacta:
                   .map(
                     (s: any) =>
                       `<div style='margin-bottom: 10px; font-size: 13.5px; color: #334155; line-height: 1.5;'>
-                        <strong style='color: #0f172a;'>${s.title || ''}:</strong> ${s.desc || ''}
+                        <strong style='color: ${primary};'>${s.title || ''}:</strong> ${s.desc || ''}
                       </div>`
                   )
                   .join('');
 
                 const richHtml = `<div style='max-width: 640px; margin: 0 auto; font-family: -apple-system, BlinkMacSystemFont, Segoe UI, Inter, Helvetica, Arial, sans-serif; background: #ffffff; border-radius: 14px; overflow: hidden; border: 1px solid #e2e8f0; box-shadow: 0 12px 32px rgba(15, 23, 42, 0.08); color: #1e293b;'>
-  <div style='background: #0f172a; border-top: 4px solid #10b981; padding: 32px 28px;'>
-    <span style='display: inline-block; background: rgba(16, 185, 129, 0.18); color: #34d399; font-size: 11px; font-weight: 700; letter-spacing: 1.2px; text-transform: uppercase; padding: 5px 12px; border-radius: 9999px; border: 1px solid rgba(52, 211, 153, 0.3);'>${parsed.badge || 'GRUPO HORMESIS · SOLUCIÓN ESPECIALIZADA'}</span>
-    <h1 style='color: #ffffff; font-size: 22px; font-weight: 800; margin: 14px 0 6px 0; line-height: 1.3;'>${parsed.headline || `Propuesta Estratégica: ${srvKey}`}</h1>
-    <p style='color: #94a3b8; font-size: 14px; margin: 0; line-height: 1.5;'>${parsed.subtitle || 'Preparado especialmente para [Nombre]'}</p>
+  <div style='background: ${primary}; border-top: 4px solid ${accent}; padding: 32px 28px;'>
+    <span style='display: inline-block; background: rgba(255, 255, 255, 0.15); color: #ffffff; font-size: 11px; font-weight: 700; letter-spacing: 1.2px; text-transform: uppercase; padding: 5px 12px; border-radius: 9999px; border: 1px solid rgba(255, 255, 255, 0.25);'>${parsed.badge || `${comp.toUpperCase()} · PROPUESTA ESPECIALIZADA`}</span>
+    <h1 style='color: #ffffff; font-size: 22px; font-weight: 800; margin: 14px 0 6px 0; line-height: 1.3;'>${parsed.headline || `Propuesta: ${srvKey}`}</h1>
+    <p style='color: #cbd5e1; font-size: 14px; margin: 0; line-height: 1.5;'>${parsed.subtitle || 'Preparado especialmente para [Nombre]'}</p>
   </div>
   <div style='padding: 28px;'>
     <p style='font-size: 15px; color: #334155; line-height: 1.7; margin: 0 0 14px 0;'>${parsed.introParagraph1 || ''}</p>
     <p style='font-size: 15px; color: #334155; line-height: 1.7; margin: 0 0 22px 0;'>${parsed.introParagraph2 || ''}</p>
-    <div style='background: #f8fafc; border-left: 4px solid #10b981; border-radius: 8px; padding: 20px 22px; margin: 24px 0;'>
-      <h3 style='margin: 0 0 14px 0; color: #0f172a; font-size: 16px; font-weight: 700;'>${parsed.valueBoxTitle || `⚡ Impacto directo en ${srvKey}`}</h3>
+    <div style='background: #f8fafc; border-left: 4px solid ${accent}; border-radius: 8px; padding: 20px 22px; margin: 24px 0;'>
+      <h3 style='margin: 0 0 14px 0; color: ${primary}; font-size: 16px; font-weight: 700;'>${parsed.valueBoxTitle || `⚡ Ventajas en ${srvKey}`}</h3>
       ${benefitsHtml}
     </div>
     <div style='background: #ffffff; border: 1px solid #e2e8f0; border-radius: 10px; padding: 20px 22px; margin: 22px 0;'>
-      <h4 style='margin: 0 0 12px 0; color: #0f172a; font-size: 14px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px;'>📋 Hoja de Ruta de Implementación</h4>
+      <h4 style='margin: 0 0 12px 0; color: ${primary}; font-size: 14px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px;'>📋 Hoja de Ruta</h4>
       ${stepsHtml}
     </div>
-    <div style='background: #ecfdf5; border: 1px solid #a7f3d0; border-radius: 8px; padding: 14px 18px; color: #065f46; font-size: 13px; margin-bottom: 24px; line-height: 1.5;'>
-      🔒 <strong>Garantía Grupo Hormesis:</strong> ${parsed.guarantee || 'Confidencialidad total y enfoque 100% en rentabilidad.'}
+    <div style='background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 14px 18px; color: #334155; font-size: 13px; margin-bottom: 24px; line-height: 1.5;'>
+      🔒 <strong>Compromiso ${comp}:</strong> ${parsed.guarantee || 'Calidad profesional y garantía de satisfacción.'}
     </div>
     <div style='text-align: center; padding: 24px 20px; background: #f8fafc; border-radius: 12px; border: 1px solid #e2e8f0;'>
-      <p style='margin: 0 0 16px 0; color: #0f172a; font-size: 15px; font-weight: 700;'>¿Evaluamos cómo aplicarlo a tu negocio en una sesión de 15 minutos?</p>
-      <a href='[Link_Calendario]' target='_blank' style='display: inline-block; background: #10b981; color: #ffffff; padding: 14px 26px; border-radius: 8px; font-weight: 700; font-size: 14px; text-decoration: none; margin: 6px; box-shadow: 0 4px 12px rgba(16, 185, 129, 0.3);'>📅 Agendar Llamada de Diagnóstico (15 min)</a>
-      <a href='${mailtoHref}' style='display: inline-block; background: #0f172a; color: #ffffff; padding: 13px 22px; border-radius: 8px; font-weight: 600; font-size: 13px; text-decoration: none; margin: 6px;'>✉️ Responder con Detalles por Correo</a>
+      <p style='margin: 0 0 16px 0; color: ${primary}; font-size: 15px; font-weight: 700;'>¿Evaluamos cómo aplicarlo a tu caso en una sesión de 15 minutos?</p>
+      <a href='[Link_Calendario]' target='_blank' style='display: inline-block; background: ${accent}; color: #ffffff; padding: 14px 26px; border-radius: 8px; font-weight: 700; font-size: 14px; text-decoration: none; margin: 6px; box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);'>${parsed.ctaBookingText || '📅 Agendar Llamada o Cita (15 min)'}</a>
+      <a href='mailto:?subject=${encodeURIComponent('Consulta sobre ' + srvKey + ' - ' + comp)}' style='display: inline-block; background: ${primary}; color: #ffffff; padding: 13px 22px; border-radius: 8px; font-weight: 600; font-size: 13px; text-decoration: none; margin: 6px;'>✉️ Responder por Correo</a>
     </div>
   </div>
-  <div style='background: #0f172a; padding: 20px 28px; text-align: center; border-top: 1px solid #1e293b;'>
-    <p style='margin: 0 0 4px 0; color: #f8fafc; font-size: 13px; font-weight: 700;'>Grupo Hormesis · Sistematización Empresarial e Inteligencia Artificial</p>
-    <p style='margin: 0; color: #94a3b8; font-size: 12px;'><a href='https://grupohormesis.es' style='color: #34d399; text-decoration: none; font-weight: 600;'>grupohormesis.es</a></p>
+  <div style='background: ${primary}; padding: 18px 28px; text-align: center; border-top: 1px solid rgba(255, 255, 255, 0.1);'>
+    <p style='margin: 0; color: #f8fafc; font-size: 13px; font-weight: 700;'>${parsed.footerCompany || comp}</p>
   </div>
 </div>`;
 
                 return [
                   srvKey,
                   {
-                    subject: parsed.subject || currentTpl?.subject || `Propuesta Estratégica: ${srvKey}`,
+                    subject: parsed.subject || currentTpl?.subject || `Propuesta: ${srvKey} | ${comp}`,
                     body: richHtml
                   }
                 ];
@@ -854,8 +862,12 @@ Devuelve ÚNICAMENTE un JSON válido con esta estructura exacta:
         return [
           srvKey,
           {
-            subject: currentTpl?.subject || `Propuesta Estratégica: ${srvKey} | Grupo Hormesis`,
-            body: ensureExecutiveFormEmailHtml(currentTpl?.body || '', srvKey, '[Link_Calendario]', mailtoHref)
+            subject: currentTpl?.subject || `Propuesta: ${srvKey} | ${compName}`,
+            body: ensureExecutiveFormEmailHtml(currentTpl?.body || '', srvKey, '[Link_Calendario]', {
+              companyName: compName,
+              businessContext: businessContextInfo,
+              brandVoice: currentConfig.brandVoice
+            })
           }
         ];
       };

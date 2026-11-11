@@ -2422,75 +2422,94 @@ FORMATO:
 }
 
 
+export function extractBusinessNameFromText(text?: string, fallback: string = 'Nuestra Empresa'): string {
+  if (!text) return fallback;
+  const m = text.match(/(?:somos|empresa|negocio|marca|compañía|clinica|agencia)[:\s]+([^.,\n]+)/i);
+  if (m && m[1] && m[1].trim().length < 45) {
+    return m[1].trim();
+  }
+  return fallback;
+}
+
+export function extractBrandColors(brandVoiceOrContext?: string): { primary: string; accent: string } {
+  const hexMatches = (brandVoiceOrContext || '').match(/#[0-9a-fA-F]{6}|#[0-9a-fA-F]{3}/g);
+  let primary = '#0f172a';
+  let accent = '#10b981';
+  if (hexMatches && hexMatches.length >= 2) {
+    primary = hexMatches[0];
+    accent = hexMatches[1];
+  } else if (hexMatches && hexMatches.length === 1) {
+    accent = hexMatches[0];
+  }
+  return { primary, accent };
+}
+
 export function ensureExecutiveFormEmailHtml(
   rawBody: string,
   serviceName: string,
   bookingUrl: string = '[Link_Calendario]',
-  replyMailto?: string
+  brandInfo?: {
+    companyName?: string;
+    businessContext?: string;
+    brandVoice?: string;
+    primaryColor?: string;
+    accentColor?: string;
+    replyMailto?: string;
+  }
 ): string {
   const cleanBody = (rawBody || '').trim();
-  const isLegacyOutreachSnippet =
-    cleanBody.toLowerCase().includes('tras auditar') ||
-    cleanBody.toLowerCase().includes('línea de diseño conceptual') ||
-    cleanBody.toLowerCase().includes('linea de diseno conceptual');
 
-  const hasFullCardLayout =
-    !isLegacyOutreachSnippet &&
-    cleanBody.includes('GRUPO HORMESIS') &&
-    (cleanBody.includes('<a ') || cleanBody.includes('href=')) &&
-    cleanBody.length > 900;
+  // Si el cuerpo ya tiene una estructura HTML rica completa (con contenedor o tablas/secciones), se respeta al 100%
+  const hasRichHtmlStructure =
+    cleanBody.includes('<div') &&
+    (cleanBody.includes('<p') || cleanBody.includes('<ul') || cleanBody.includes('<table') || cleanBody.includes('<section')) &&
+    cleanBody.length > 250;
 
-  if (hasFullCardLayout) {
+  if (hasRichHtmlStructure) {
     return cleanBody;
   }
 
-  const consultativeIntroHtml =
-    !cleanBody || isLegacyOutreachSnippet
-      ? `<p style='font-size: 15px; color: #334155; line-height: 1.7; margin: 0 0 14px 0;'>Hola <strong style='color: #0f172a;'>[Nombre]</strong>, hemos recibido tu solicitud de información sobre <strong style='color: #0f172a;'>${serviceName}</strong>. Nuestro equipo de consultoría e ingeniería ya ha revisado tu perfil para estructurar una solución adaptada a los objetivos de tu empresa.</p>
-      <p style='font-size: 15px; color: #334155; line-height: 1.7; margin: 0 0 18px 0;'>En <strong>Grupo Hormesis</strong> nos especializamos en transformar operaciones de negocio mediante arquitecturas de software a medida, inteligencia artificial aplicada y automatización estratégica enfocada al 100% en rentabilidad y retorno de inversión.</p>`
-      : cleanBody;
+  const company =
+    brandInfo?.companyName ||
+    extractBusinessNameFromText(brandInfo?.businessContext, 'Nuestra Empresa');
+  const colors = extractBrandColors(brandInfo?.brandVoice || brandInfo?.businessContext);
+  const primary = brandInfo?.primaryColor || colors.primary;
+  const accent = brandInfo?.accentColor || colors.accent;
 
-  const defaultMailtoBody = `Hola equipo de Grupo Hormesis,\n\nHe recibido su propuesta sobre ${serviceName} y me gustaría coordinar nuestra Llamada de Diagnóstico de 15 minutos.\n\nSaludos,\n[Nombre]`;
+  const consultativeIntroHtml = cleanBody ||
+    `<p style='font-size: 15px; color: #334155; line-height: 1.7; margin: 0 0 14px 0;'>Hola <strong style='color: ${primary};'>[Nombre]</strong>, hemos recibido tu solicitud de información sobre <strong style='color: ${primary};'>${serviceName}</strong> en <strong style='color: ${primary};'>${company}</strong>.</p>
+    <p style='font-size: 15px; color: #334155; line-height: 1.7; margin: 0 0 18px 0;'>Nos pondremos en contacto contigo para ofrecerte una propuesta totalmente personalizada y adaptada a las necesidades y objetivos de tu proyecto.</p>`;
+
   const finalMailto =
-    replyMailto ||
-    `mailto:ventas@grupohormesis.com?subject=${encodeURIComponent('Diagnóstico de Proyecto - ' + serviceName)}&body=${encodeURIComponent(defaultMailtoBody)}`;
+    brandInfo?.replyMailto ||
+    `mailto:?subject=${encodeURIComponent('Consulta sobre ' + serviceName + ' - ' + company)}`;
 
   return `<div style='max-width: 640px; margin: 0 auto; font-family: -apple-system, BlinkMacSystemFont, Segoe UI, Inter, Helvetica, Arial, sans-serif; background: #ffffff; border-radius: 14px; overflow: hidden; border: 1px solid #e2e8f0; box-shadow: 0 12px 32px rgba(15, 23, 42, 0.08); color: #1e293b;'>
-  <div style='background: #0f172a; border-top: 4px solid #10b981; padding: 32px 28px;'>
-    <span style='display: inline-block; background: rgba(16, 185, 129, 0.18); color: #34d399; font-size: 11px; font-weight: 700; letter-spacing: 1.2px; text-transform: uppercase; padding: 5px 12px; border-radius: 9999px; border: 1px solid rgba(52, 211, 153, 0.3);'>GRUPO HORMESIS · SOLUCIÓN ESPECIALIZADA</span>
-    <h1 style='color: #ffffff; font-size: 22px; font-weight: 800; margin: 14px 0 6px 0; line-height: 1.3;'>Propuesta Estratégica: ${serviceName}</h1>
-    <p style='color: #94a3b8; font-size: 14px; margin: 0; line-height: 1.5;'>Preparado especialmente para <strong style='color: #f8fafc;'>[Nombre]</strong></p>
+  <div style='background: ${primary}; border-top: 4px solid ${accent}; padding: 32px 28px;'>
+    <span style='display: inline-block; background: rgba(255, 255, 255, 0.15); color: #ffffff; font-size: 11px; font-weight: 700; letter-spacing: 1.2px; text-transform: uppercase; padding: 5px 12px; border-radius: 9999px; border: 1px solid rgba(255, 255, 255, 0.25);'>${company.toUpperCase()} · PROPUESTA ESTRATÉGICA</span>
+    <h1 style='color: #ffffff; font-size: 22px; font-weight: 800; margin: 14px 0 6px 0; line-height: 1.3;'>Propuesta: ${serviceName}</h1>
+    <p style='color: #cbd5e1; font-size: 14px; margin: 0; line-height: 1.5;'>Preparado especialmente para <strong style='color: #ffffff;'>[Nombre]</strong></p>
   </div>
   <div style='padding: 28px;'>
     <div style='font-size: 15px; color: #334155; line-height: 1.7;'>
       ${consultativeIntroHtml}
     </div>
-    <div style='background: #f8fafc; border-left: 4px solid #10b981; border-radius: 8px; padding: 18px 20px; margin: 24px 0;'>
-      <h3 style='margin: 0 0 10px 0; color: #0f172a; font-size: 15px; font-weight: 700;'>⚡ ¿Qué logramos al implementar nuestra solución de ${serviceName}?</h3>
+    <div style='background: #f8fafc; border-left: 4px solid ${accent}; border-radius: 8px; padding: 18px 20px; margin: 24px 0;'>
+      <h3 style='margin: 0 0 10px 0; color: ${primary}; font-size: 15px; font-weight: 700;'>⚡ ¿Por qué elegir ${company}?</h3>
       <ul style='margin: 0; padding-left: 18px; color: #475569; font-size: 14px; line-height: 1.65;'>
-        <li style='margin-bottom: 6px;'><strong style='color: #0f172a;'>Arquitectura a Medida y Escalable:</strong> Diseñada específicamente para el flujo operativo de tu negocio, sin plantillas rígidas.</li>
-        <li style='margin-bottom: 6px;'><strong style='color: #0f172a;'>Ahorro Operativo Inmediato:</strong> Automatización de tareas críticas y reducción de cuellos de botella desde las primeras semanas.</li>
-        <li><strong style='color: #0f172a;'>Acompañamiento Técnico Directo:</strong> Soporte continuo de ingeniería y métricas claras de retorno de inversión (ROI).</li>
+        <li style='margin-bottom: 6px;'><strong style='color: ${primary};'>Solución 100% Personalizada:</strong> Diseñada a medida para tus objetivos particulares.</li>
+        <li style='margin-bottom: 6px;'><strong style='color: ${primary};'>Atención Rápida y Directa:</strong> Sin intermediarios, con asesoramiento profesional continuo.</li>
+        <li><strong style='color: ${primary};'>Garantía y Confianza:</strong> Compromiso pleno con la calidad de nuestros servicios y tu satisfacción.</li>
       </ul>
     </div>
-    <div style='background: #ffffff; border: 1px solid #e2e8f0; border-radius: 10px; padding: 20px; margin: 22px 0;'>
-      <h4 style='margin: 0 0 12px 0; color: #0f172a; font-size: 14px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px;'>📋 Próximos Pasos (Hoja de Ruta)</h4>
-      <p style='margin: 0 0 8px 0; font-size: 13.5px; color: #334155;'><strong>1. Diagnóstico Técnico (15 min):</strong> Evaluamos tu escenario actual y objetivos clave sin compromiso.</p>
-      <p style='margin: 0 0 8px 0; font-size: 13.5px; color: #334155;'><strong>2. Propuesta &amp; Arquitectura:</strong> Te presentamos el plan de acción detallado, plazos y alcance exacto.</p>
-      <p style='margin: 0; font-size: 13.5px; color: #334155;'><strong>3. Despliegue Ágil:</strong> Ejecución por fases con entregas verificables y garantía técnica.</p>
-    </div>
-    <div style='background: #ecfdf5; border: 1px solid #a7f3d0; border-radius: 8px; padding: 12px 16px; color: #065f46; font-size: 13px; margin-bottom: 24px;'>
-      🔒 <strong>Garantía Grupo Hormesis:</strong> Confidencialidad total, infraestructura de alto rendimiento y enfoque 100% en rentabilidad de negocio.
-    </div>
     <div style='text-align: center; padding: 24px 20px; background: #f8fafc; border-radius: 12px; border: 1px solid #e2e8f0;'>
-      <p style='margin: 0 0 16px 0; color: #0f172a; font-size: 15px; font-weight: 700;'>¿Revisamos cómo aplicarlo a tu caso en una breve sesión de 15 minutos?</p>
-      <a href='${bookingUrl}' target='_blank' style='display: inline-block; background: #10b981; color: #ffffff; padding: 14px 26px; border-radius: 8px; font-weight: 700; font-size: 14px; text-decoration: none; margin: 6px; box-shadow: 0 4px 12px rgba(16, 185, 129, 0.3);'>📅 Agendar Llamada de Diagnóstico (15 min)</a>
-      <a href='${finalMailto}' style='display: inline-block; background: #0f172a; color: #ffffff; padding: 13px 22px; border-radius: 8px; font-weight: 600; font-size: 13px; text-decoration: none; margin: 6px;'>✉️ Responder con Detalles por Correo</a>
+      <p style='margin: 0 0 16px 0; color: ${primary}; font-size: 15px; font-weight: 700;'>¿Deseas revisar los detalles directamente con nosotros?</p>
+      <a href='${bookingUrl}' target='_blank' style='display: inline-block; background: ${accent}; color: #ffffff; padding: 14px 26px; border-radius: 8px; font-weight: 700; font-size: 14px; text-decoration: none; margin: 6px; box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);'>📅 Agendar Llamada o Cita</a>
+      <a href='${finalMailto}' style='display: inline-block; background: ${primary}; color: #ffffff; padding: 13px 22px; border-radius: 8px; font-weight: 600; font-size: 13px; text-decoration: none; margin: 6px;'>✉️ Responder por Correo</a>
     </div>
   </div>
-  <div style='background: #0f172a; padding: 20px 28px; text-align: center; border-top: 1px solid #1e293b;'>
-    <p style='margin: 0 0 4px 0; color: #f8fafc; font-size: 13px; font-weight: 700;'>Grupo Hormesis · Sistematización Empresarial e Inteligencia Artificial</p>
-    <p style='margin: 0; color: #94a3b8; font-size: 12px;'><a href='https://grupohormesis.es' style='color: #34d399; text-decoration: none; font-weight: 600;'>grupohormesis.es</a></p>
+  <div style='background: ${primary}; padding: 18px 28px; text-align: center; border-top: 1px solid rgba(255, 255, 255, 0.1);'>
+    <p style='margin: 0; color: #f8fafc; font-size: 13px; font-weight: 700;'>${company}</p>
   </div>
 </div>`;
 }
@@ -2579,11 +2598,22 @@ class FormContactWorkflow extends BaseWorkflowType {
       ? `${frontendUrl}/book/${calendarId}${data.leadId ? `?ref=${data.leadId}` : ''}`
       : `${frontendUrl}/contacto`;
 
-    let clientSubject = matchedTemplate.subject || `Propuesta e Información: ${matchedServiceKey} | Grupo Hormesis`;
+    const companyName =
+      config?.businessName ||
+      config?.companyName ||
+      extractBusinessNameFromText(config?.businessContext, context.workflow.name || 'Atención al Cliente');
+
+    let clientSubject = matchedTemplate.subject || `Propuesta e Información: ${matchedServiceKey} | ${companyName}`;
     let clientBody = ensureExecutiveFormEmailHtml(
       matchedTemplate.body || '',
       matchedServiceKey,
-      bookingUrl
+      bookingUrl,
+      {
+        companyName,
+        businessContext: config?.businessContext,
+        brandVoice: config?.brandVoice,
+        replyMailto: `mailto:${gmailAddress}?subject=${encodeURIComponent('Re: ' + clientSubject)}`
+      }
     );
 
     // Reemplazar variables tanto en el asunto como en el cuerpo
@@ -2592,8 +2622,10 @@ class FormContactWorkflow extends BaseWorkflowType {
       '[Nombre]': contactName,
       '{{email}}': contactEmail,
       '[Email]': contactEmail,
-      '{{businessName}}': data.businessName || data.company || data.empresa || 'tu empresa',
-      '[Empresa]': data.businessName || data.company || data.empresa || 'tu empresa',
+      '{{companyName}}': companyName,
+      '[Empresa]': companyName,
+      '[Nombre_Empresa]': companyName,
+      '{{businessName}}': data.businessName || data.company || data.empresa || companyName,
       '{{service}}': matchedServiceKey,
       '[Servicio]': matchedServiceKey,
       '{{message}}': data.message || data.mensaje || '',
@@ -2634,7 +2666,7 @@ class FormContactWorkflow extends BaseWorkflowType {
     });
 
     await transporter.sendMail({
-      from: `"Grupo Hormesis" <${gmailAddress}>`,
+      from: `"${companyName}" <${gmailAddress}>`,
       to: contactEmail,
       subject: clientSubject,
       text: clientBody.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim(),

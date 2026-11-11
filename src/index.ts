@@ -56,7 +56,7 @@ app.get('/api/health', async (req, res) => {
     const execCount = await prisma.workflowExecution.count();
     res.json({
       status: 'ok',
-      version: '1.0.14-executive-form-emails',
+      version: '1.0.15-dynamic-business-workflows',
       execCount,
       dbHost: process.env.DATABASE_URL ? new URL(process.env.DATABASE_URL).host : 'none',
       chromium: process.env.PUPPETEER_EXECUTABLE_PATH || 'not_set',
