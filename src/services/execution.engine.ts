@@ -2605,16 +2605,57 @@ export function extractBusinessNameFromText(text?: string, fallback: string = 'N
 }
 
 export function extractBrandColors(brandVoiceOrContext?: string): { primary: string; accent: string } {
-  const hexMatches = (brandVoiceOrContext || '').match(/#[0-9a-fA-F]{6}|#[0-9a-fA-F]{3}/g);
-  let primary = '#0f172a';
-  let accent = '#10b981';
+  const text = (brandVoiceOrContext || '').toLowerCase();
+  const hexMatches = text.match(/#[0-9a-fA-F]{6}|#[0-9a-fA-F]{3}/g);
+
   if (hexMatches && hexMatches.length >= 2) {
-    primary = hexMatches[0];
-    accent = hexMatches[1];
-  } else if (hexMatches && hexMatches.length === 1) {
-    accent = hexMatches[0];
+    return { primary: hexMatches[0], accent: hexMatches[1] };
   }
-  return { primary, accent };
+  if (hexMatches && hexMatches.length === 1) {
+    const single = hexMatches[0];
+    const isDark = /#(1[0-9a-f]{5}|0[0-9a-f]{5}|2[0-9a-f]{5}|3[0-9a-f]{5}|4[0-9a-f]{5}|[0-4][0-9a-f]{2})/i.test(single);
+    const accent = isDark ? '#d97706' : '#0f172a';
+    return { primary: single, accent };
+  }
+
+  // Mapeo inteligente de colores por nombres o combinaciones en español / inglés
+  const COLOR_RULES: Array<{ test: RegExp; primary: string; accent: string }> = [
+    { test: /azul marino.*dorad|dorad.*azul marino/i, primary: '#0f2a4a', accent: '#eab308' },
+    { test: /azul marino/i, primary: '#0f2a4a', accent: '#38bdf8' },
+    { test: /azul.*dorad|dorad.*azul/i, primary: '#1e3a8a', accent: '#eab308' },
+    { test: /azul.*blanc/i, primary: '#1e40af', accent: '#38bdf8' },
+    { test: /azul/i, primary: '#1e3a8a', accent: '#2563eb' },
+    { test: /burdeos.*dorad|dorad.*burdeos|granate.*dorad/i, primary: '#800020', accent: '#d4af37' },
+    { test: /burdeos|granate|vino/i, primary: '#800020', accent: '#eab308' },
+    { test: /rojo.*negr|negr.*rojo/i, primary: '#18181b', accent: '#dc2626' },
+    { test: /rojo.*dorad|dorad.*rojo/i, primary: '#991b1b', accent: '#d97706' },
+    { test: /rojo/i, primary: '#991b1b', accent: '#ef4444' },
+    { test: /dorad.*negr|negr.*dorad|oro.*negr/i, primary: '#18181b', accent: '#d97706' },
+    { test: /dorado|oro/i, primary: '#1c1917', accent: '#d97706' },
+    { test: /esmeralda|menta/i, primary: '#064e3b', accent: '#10b981' },
+    { test: /verde oscuro/i, primary: '#14532d', accent: '#22c55e' },
+    { test: /verde/i, primary: '#166534', accent: '#10b981' },
+    { test: /morado|purpura|violeta|lila/i, primary: '#4c1d95', accent: '#a855f7' },
+    { test: /naranja|terracota/i, primary: '#7c2d12', accent: '#ea580c' },
+    { test: /marron|cafe|chocolate/i, primary: '#451a03', accent: '#d97706' },
+    { test: /rosa|fucsia/i, primary: '#831843', accent: '#ec4899' },
+    { test: /gris|antracita|plata/i, primary: '#1e293b', accent: '#64748b' },
+    { test: /negro/i, primary: '#18181b', accent: '#f59e0b' }
+  ];
+
+  for (const rule of COLOR_RULES) {
+    if (rule.test.test(text)) {
+      return { primary: rule.primary, accent: rule.accent };
+    }
+  }
+
+  // Si expresamente menciona Hormesis
+  if (/hormesis/i.test(text)) {
+    return { primary: '#0f172a', accent: '#10b981' };
+  }
+
+  // Valor por defecto profesional y neutro
+  return { primary: '#1e293b', accent: '#2563eb' };
 }
 
 export function ensureExecutiveFormEmailHtml(
@@ -2645,7 +2686,7 @@ export function ensureExecutiveFormEmailHtml(
   const company =
     brandInfo?.companyName ||
     extractBusinessNameFromText(brandInfo?.businessContext, 'Nuestra Empresa');
-  const colors = extractBrandColors(brandInfo?.brandVoice || brandInfo?.businessContext);
+  const colors = extractBrandColors(`${brandInfo?.brandVoice || ''} ${brandInfo?.businessContext || ''}`);
   const primary = brandInfo?.primaryColor || colors.primary;
   const accent = brandInfo?.accentColor || colors.accent;
 

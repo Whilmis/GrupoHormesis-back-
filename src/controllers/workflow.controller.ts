@@ -446,11 +446,14 @@ export const workflowController = {
         (req.body.mode === 'outreach' || (serviceList.length === 1 && serviceList[0] === 'Propuesta de Negocios'));
 
       const brandVoiceText = brand_voice || req.body.brandVoice || '';
+      const businessContextText = business_context || req.body.businessContext || '';
       const companyName =
         business_name ||
         req.body.businessName ||
-        extractBusinessNameFromText(business_context, 'Nuestra Empresa');
-      const colors = extractBrandColors(brandVoiceText || business_context);
+        extractBusinessNameFromText(businessContextText, 'Nuestra Empresa');
+      const colors = extractBrandColors(`${brandVoiceText} ${businessContextText}`);
+
+      const isValidHex = (c?: string) => typeof c === 'string' && /^#[0-9a-fA-F]{3,8}$/.test(c.trim());
 
       const buildExecutiveHtmlFromStructured = (
         serviceName: string,
@@ -458,8 +461,8 @@ export const workflowController = {
         bookingUrl: string = '[Link_Calendario]'
       ): string => {
         const comp = data?.companyName || companyName;
-        const primary = data?.primaryColor || colors.primary;
-        const accent = data?.accentColor || colors.accent;
+        const primary = isValidHex(data?.primaryColor) ? data.primaryColor.trim() : (isValidHex(colors.primary) ? colors.primary : '#1e293b');
+        const accent = isValidHex(data?.accentColor) ? data.accentColor.trim() : (isValidHex(colors.accent) ? colors.accent : '#2563eb');
         const badge = data?.badge || `${comp.toUpperCase()} · PROPUESTA ESTRATÉGICA`;
         const headline = data?.headline || `Propuesta: ${serviceName}`;
         const subtitle = data?.subtitle || 'Diagnóstico y propuesta personalizada para [Nombre]';
@@ -586,7 +589,7 @@ Devuelve SOLO un JSON válido:
   "body": "<p style='font-size: 15px; color: #334155; margin-bottom: 12px;'>...</p><ul style='color: #475569;'><li>...</li></ul>"
 }`
           : `Eres el Director Comercial y Consultor Estratégico de la empresa "${companyName}".
-Contexto del negocio y servicios: "${business_context}"
+Contexto del negocio y servicios: "${businessContextText}"
 Línea de Color / Identidad Visual: "${brandVoiceText || 'Profesional acorde al sector'}"
 Servicio solicitado: "${service}"
 
@@ -595,9 +598,10 @@ Redacta una respuesta comercial ejecutiva y de alto valor adaptada 100% a la pro
 
 REGLAS OBLIGATORIAS:
 1. El correo es emitido por "${companyName}". NUNCA menciones a Grupo Hormesis ni a ninguna entidad ajena al contexto del negocio.
-2. Propón la paleta de colores para este negocio:
-   - "primaryColor": color hexadecimal oscuro para fondo de cabecera y botones secundarios (ej: '#0f172a', '#1e3a8a', '#18181b', '#1e293b', etc.)
-   - "accentColor": color hexadecimal vibrante para acentos y botón principal (ej: '#10b981', '#2563eb', '#f59e0b', '#7c3aed', '#0284c7', etc.)
+2. Paleta de colores para "${companyName}":
+   - "primaryColor": DEBE ser el color primario indicado en la Línea de Color "${brandVoiceText}". Si el usuario especificó un color o código hex, úsalo estrictamente. Valor de referencia calculado: "${colors.primary}".
+   - "accentColor": DEBE ser el color de acento / botón indicado en la Línea de Color "${brandVoiceText}". Si el usuario especificó un color o código hex, úsalo estrictamente. Valor de referencia calculado: "${colors.accent}".
+   ¡IMPORTANTE: NUNCA uses la combinación por defecto de Grupo Hormesis si el negocio tiene su propia identidad!
 3. Usa [Nombre] para el cliente. NO uses comillas dobles internas en textos que rompan el JSON.
 4. Devuelve ÚNICAMENTE un objeto JSON válido con esta estructura exacta:
 {
@@ -674,15 +678,17 @@ REGLAS OBLIGATORIAS:
                     }
                   ];
                 } else {
+                  const resolvedPrimary = isValidHex(parsed.primaryColor) ? parsed.primaryColor.trim() : colors.primary;
+                  const resolvedAccent = isValidHex(parsed.accentColor) ? parsed.accentColor.trim() : colors.accent;
                   const fullHtml = parsed.body
                     ? ensureExecutiveFormEmailHtml(parsed.body, service, '[Link_Calendario]', {
                         companyName,
-                        businessContext: business_context,
+                        businessContext: businessContextText,
                         brandVoice: brandVoiceText,
-                        primaryColor: parsed.primaryColor || colors.primary,
-                        accentColor: parsed.accentColor || colors.accent
+                        primaryColor: resolvedPrimary,
+                        accentColor: resolvedAccent
                       })
-                    : buildExecutiveHtmlFromStructured(service, parsed, '[Link_Calendario]');
+                    : buildExecutiveHtmlFromStructured(service, { ...parsed, primaryColor: resolvedPrimary, accentColor: resolvedAccent }, '[Link_Calendario]');
                   return [
                     service,
                     {
@@ -761,7 +767,7 @@ REGLAS OBLIGATORIAS:
       const compName =
         currentConfig.businessName ||
         extractBusinessNameFromText(currentConfig.businessContext, workflow.name || 'Nuestra Empresa');
-      const brandColors = extractBrandColors(currentConfig.brandVoice || currentConfig.businessContext);
+      const brandColors = extractBrandColors(`${currentConfig.brandVoice || ''} ${refinement_prompt || ''} ${currentConfig.businessContext || ''}`);
       const businessContextInfo = currentConfig.businessContext || `Empresa: ${compName}`;
       const modelsCascade = ['llama-3.3-70b-versatile', 'openai/gpt-oss-120b', 'llama-3.1-8b-instant'];
 
@@ -842,8 +848,8 @@ Devuelve ÚNICAMENTE un JSON válido con esta estructura exacta:
               if (match) {
                 const parsed = JSON.parse(match[0]);
                 const comp = parsed.companyName || compName;
-                const primary = parsed.primaryColor || brandColors.primary;
-                const accent = parsed.accentColor || brandColors.accent;
+                const primary = isValidHex(parsed.primaryColor) ? parsed.primaryColor.trim() : brandColors.primary;
+                const accent = isValidHex(parsed.accentColor) ? parsed.accentColor.trim() : brandColors.accent;
 
                 const benefitsHtml = (Array.isArray(parsed.benefits) ? parsed.benefits : [])
                   .map(
