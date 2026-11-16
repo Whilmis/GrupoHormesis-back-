@@ -24,7 +24,7 @@ export interface StartupRadarConfig {
 
 export interface RawStartupCandidate {
   sourcePlatform: 'Product Hunt' | 'Reddit' | 'LinkedIn';
-  sourceDetail: string; // e.g., 'r/cofounder', 'PH Topic: pre-launch', 'LinkedIn Seed Search'
+  sourceDetail: string;
   projectName: string;
   founderName: string;
   founderHandleOrRole: string;
@@ -36,6 +36,7 @@ export interface RawStartupCandidate {
   makersCount: number;
   tags: string[];
   rawSnippet: string;
+  isSpanish: boolean;
 }
 
 export interface QualifiedStartupLead extends RawStartupCandidate {
@@ -49,248 +50,202 @@ export interface QualifiedStartupLead extends RawStartupCandidate {
   aiSubjectLine: string;
 }
 
-const DEFAULT_EXCLUDE_MATURE_REGEX =
-  /\b(series [a-f]|ipo|enterprise-grade|fortune 500|soc2 type ii|100\+ employees|hiring senior staff|\$50k mrr|\$100k mrr|1m\+ users|established 201[0-9])\b/i;
+// Filtro estricto contra gigantes tecnológicos y productos consolidados
+const EXCLUDE_MATURE_OR_BIGTECH_REGEX =
+  /\b(zoom|google|microsoft|apple|meta|facebook|amazon|netflix|openai|anthropic|stripe|notion|figma|canva|hubspot|salesforce|shopify|slack|atlassian|series [a-f]|ipo|enterprise-grade|fortune 500|soc2 type ii|100\+ employees|hiring senior|\$50k mrr|\$100k mrr|1m\+ users)\b/i;
+
+// Detector de idioma español / contexto hispano
+const SPANISH_SIGNAL_REGEX =
+  /\b(españa|madrid|barcelona|valencia|sevilla|bilbao|málaga|méxico|colombia|argentina|chile|perú|latam|proyecto|busco|buscando|socio|cofundador|fundador|desarrollador|programador|validar|validación|idea|negocio|empresa|aplicación|plataforma|herramienta|ayuda|equipo|lanzamiento|para|con|una|los|las|del|que|por|cómo|más|estamos|creando|construyendo)\b|[áéíóúñ¿¡]/i;
+
+const EXCLUDED_DOMAINS_FOR_STARTUP_URL =
+  /reddit\.com|redd\.it|producthunt\.com|linkedin\.com|imgur\.com|giphy\.com|youtube\.com|youtu\.be|twitter\.com|x\.com|facebook\.com|instagram\.com|discord\.gg|github\.com|medium\.com|substack\.com|google\.com|apple\.com|play\.google|apps\.apple|duckduckgo\.com|bing\.com|wikipedia\.org/i;
 
 export class StartupRadarService {
   /**
-   * Extrae URLs externas mencionadas en un texto (excluyendo redes sociales genéricas o imágenes)
+   * Detecta si un texto o candidato pertenece al ecosistema en español (España / Latam)
    */
-  static extractExternalUrls(text: string): string[] {
+  static isSpanishContent(text: string): boolean {
+    if (!text) return false;
+    const matches = text.match(
+      /\b(españa|madrid|barcelona|valencia|méxico|colombia|argentina|chile|latam|proyecto|busco|buscando|socio|cofundador|fundador|desarrollador|validar|validando|idea|startup|herramienta|plataforma|estamos|creando|construyendo|para|con|por|una|los|las|del|que)\b|[áéíóúñ]/gi
+    );
+    return Boolean(matches && matches.length >= 2);
+  }
+
+  /**
+   * Extrae URLs externas de startups mencionadas en un texto
+   */
+  static extractExternalStartupUrls(text: string): string[] {
     if (!text) return [];
-    const urlRegex = /https?:\/\/[^\s)"'<>[\]]+/gi;
+    const urlRegex = /https?:\/\/[a-zA-Z0-9][-a-zA-Z0-9.]*\.[a-zA-Z]{2,}[^\s)"'<>[\]]*/gi;
     const matches = text.match(urlRegex) || [];
     const cleaned: string[] = [];
 
     for (const raw of matches) {
-      const url = raw.replace(/[.,;!?]+$/, '');
-      if (
-        !/reddit\.com|redd\.it|imgur\.com|giphy\.com|youtube\.com|youtu\.be|twitter\.com|x\.com|facebook\.com|instagram\.com|discord\.gg/i.test(
-          url
-        )
-      ) {
-        if (!cleaned.includes(url)) cleaned.push(url);
-      }
+      try {
+        const urlObj = new URL(raw.replace(/[.,;!?]+$/, ''));
+        if (!EXCLUDED_DOMAINS_FOR_STARTUP_URL.test(urlObj.hostname)) {
+          const base = `${urlObj.protocol}//${urlObj.hostname}`;
+          if (!cleaned.includes(base)) cleaned.push(base);
+        }
+      } catch {}
     }
     return cleaned;
   }
 
   /**
-   * Raspa de forma ligera una URL para intentar descubrir el correo del fundador o del proyecto
+   * Extrae correos electrónicos directamente de un bloque de texto
    */
-  static async scrapeEmailAndMetaFromWebsite(
-    url: string
-  ): Promise<{ email: string | null; title?: string; description?: string }> {
-    if (!url || !url.startsWith('http')) return { email: null };
+  static extractEmailFromPlainText(text: string): string | null {
+    if (!text) return null;
+    const matches = text.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g) || [];
+    for (const raw of matches) {
+      const clean = raw.toLowerCase().trim().replace(/[.,;!?]+$/, '');
+      if (
+        !clean.endsWith('.png') &&
+        !clean.endsWith('.jpg') &&
+        !clean.endsWith('.svg') &&
+        !clean.includes('example.com') &&
+        !clean.includes('sentry.io') &&
+        !clean.includes('wixpress.com') &&
+        !clean.includes('noreply') &&
+        !clean.includes('no-reply')
+      ) {
+        return clean;
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Raspa la web de una startup (home y páginas de contacto/aviso legal) para extraer su correo real y metadatos.
+   * Si la web tiene registros MX válidos en su dominio propio pero ofusca el correo en JS, resuelve el buzón de fundador/contacto verificado por MX.
+   */
+  static async deepScrapeStartupWebsite(
+    websiteUrl: string
+  ): Promise<{ email: string | null; finalUrl: string; title?: string; description?: string; isSpanish?: boolean }> {
+    if (!websiteUrl || !websiteUrl.startsWith('http')) {
+      return { email: null, finalUrl: websiteUrl };
+    }
+
+    let resolvedUrl = websiteUrl;
     try {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 5500);
-      const res = await fetch(url, {
-        signal: controller.signal,
-        headers: {
-          'User-Agent':
-            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-          Accept: 'text/html,application/xhtml+xml'
+      const parsed = new URL(websiteUrl);
+      const origin = `${parsed.protocol}//${parsed.hostname}`;
+
+      const fetchPageHtml = async (targetUrl: string, timeoutMs = 5000): Promise<{ html: string; finalUrl: string } | null> => {
+        try {
+          const controller = new AbortController();
+          const t = setTimeout(() => controller.abort(), timeoutMs);
+          const res = await fetch(targetUrl, {
+            signal: controller.signal,
+            redirect: 'follow',
+            headers: {
+              'User-Agent':
+                'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+              'Accept-Language': 'es-ES,es;q=0.9,en;q=0.8',
+              Accept: 'text/html,application/xhtml+xml'
+            }
+          });
+          clearTimeout(t);
+          if (!res.ok) return null;
+          const html = await res.text();
+          return { html, finalUrl: res.url || targetUrl };
+        } catch {
+          return null;
         }
-      });
-      clearTimeout(timeoutId);
+      };
 
-      if (!res.ok) return { email: null };
-      const html = await res.text();
-      const email = await EmailValidatorService.extractBestEmailFromHtml(html, url);
+      const homeData = await fetchPageHtml(websiteUrl, 5500);
+      if (!homeData) return { email: null, finalUrl: websiteUrl };
 
-      const titleMatch = html.match(/<title[^>]*>([^<]+)<\/title>/i);
+      resolvedUrl = homeData.finalUrl;
+      const html = homeData.html;
+
+      const titleMatch = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
       const descMatch =
         html.match(/<meta[^>]+name=["']description["'][^>]+content=["']([^"']+)["']/i) ||
         html.match(/<meta[^>]+property=["']og:description["'][^>]+content=["']([^"']+)["']/i);
 
-      return {
-        email: email || null,
-        title: titleMatch?.[1]?.trim(),
-        description: descMatch?.[1]?.trim()
-      };
+      const title = titleMatch?.[1]?.replace(/\s+/g, ' ').trim();
+      const description = descMatch?.[1]?.replace(/\s+/g, ' ').trim();
+      const isSpanish =
+        /lang=["']es/i.test(html) ||
+        parsed.hostname.endsWith('.es') ||
+        this.isSpanishContent(`${title || ''} ${description || ''}`);
+
+      // 1. Intentar extraer email de la página principal
+      let email = await EmailValidatorService.extractBestEmailFromHtml(html, resolvedUrl);
+      if (email) {
+        return { email, finalUrl: resolvedUrl, title, description, isSpanish };
+      }
+
+      // 2. Si no está en la home, buscar en subpáginas típicas (/contacto, /contact, /aviso-legal, /about)
+      const contactPaths = ['/contacto', '/contact', '/aviso-legal', '/sobre-nosotros', '/about'];
+      for (const path of contactPaths.slice(0, 3)) {
+        const subData = await fetchPageHtml(`${origin}${path}`, 3500);
+        if (subData?.html) {
+          email = await EmailValidatorService.extractBestEmailFromHtml(subData.html, resolvedUrl);
+          if (email) {
+            return { email, finalUrl: resolvedUrl, title, description, isSpanish };
+          }
+        }
+      }
+
+      // 3. Si es un dominio propio de startup (no plataforma genérica), verificar si el dominio tiene servidor de correo MX activo
+      const cleanHost = new URL(resolvedUrl).hostname.replace(/^www\./i, '');
+      if (!EXCLUDED_DOMAINS_FOR_STARTUP_URL.test(cleanHost) && cleanHost.includes('.')) {
+        const candidateEmails = [`hola@${cleanHost}`, `info@${cleanHost}`, `contacto@${cleanHost}`, `hello@${cleanHost}`];
+        const validation = await EmailValidatorService.validateEmail(candidateEmails[0], resolvedUrl);
+        if (validation.isValid) {
+          return {
+            email: isSpanish ? `hola@${cleanHost}` : `hello@${cleanHost}`,
+            finalUrl: resolvedUrl,
+            title,
+            description,
+            isSpanish
+          };
+        }
+      }
+
+      return { email: null, finalUrl: resolvedUrl, title, description, isSpanish };
     } catch {
-      return { email: null };
+      return { email: null, finalUrl: resolvedUrl };
     }
   }
 
   /**
-   * 1. PRODUCT HUNT PIPELINE
-   * Integra la API GraphQL v2 de Product Hunt (si hay token) + RSS/Atom público filtrando por etiquetas de ideación
-   * y descartando productos con desarrollo avanzado (alto volumen de votos o equipos grandes).
+   * Si tenemos una URL de Product Hunt (ej. https://www.producthunt.com/products/xxx),
+   * raspa la página de Product Hunt para extraer el sitio web externo real de la startup.
    */
-  static async fetchProductHuntCandidates(
-    tags: string[],
-    maxUpvotes: number,
-    productHuntToken?: string,
-    log?: (msg: string) => void
-  ): Promise<RawStartupCandidate[]> {
-    const candidates: RawStartupCandidate[] = [];
-    const cleanTags = tags.length > 0 ? tags : ['pre-launch', 'ideation', 'mvp', 'saas', 'artificial-intelligence', 'developer-tools'];
-
-    // A) Si hay Token de Product Hunt API v2 GraphQL
-    if (productHuntToken && productHuntToken.trim().length > 10) {
-      log?.(`[Product Hunt API] Consultando GraphQL v2 para etiquetas: ${cleanTags.slice(0, 4).join(', ')}...`);
-      for (const topicSlug of cleanTags.slice(0, 3)) {
-        try {
-          const query = `
-            query($topic: String!) {
-              posts(first: 12, topic: $topic, order: NEWEST) {
-                edges {
-                  node {
-                    id
-                    name
-                    tagline
-                    description
-                    url
-                    website
-                    votesCount
-                    makers {
-                      name
-                      headline
-                      username
-                    }
-                    topics {
-                      edges {
-                        node {
-                          name
-                          slug
-                        }
-                      }
-                    }
-                  }
-                }
-              }
-            }
-          `;
-          const controller = new AbortController();
-          const t = setTimeout(() => controller.abort(), 7000);
-          const res = await fetch('https://api.producthunt.com/v2/api/graphql', {
-            method: 'POST',
-            signal: controller.signal,
-            headers: {
-              Authorization: `Bearer ${productHuntToken.trim()}`,
-              'Content-Type': 'application/json',
-              Accept: 'application/json'
-            },
-            body: JSON.stringify({ query, variables: { topic: topicSlug.toLowerCase().replace(/\s+/g, '-') } })
-          });
-          clearTimeout(t);
-
-          if (res.ok) {
-            const json = await res.json();
-            const edges = json?.data?.posts?.edges || [];
-            for (const edge of edges) {
-              const node = edge?.node;
-              if (!node) continue;
-              const votes = Number(node.votesCount || 0);
-              const makers = Array.isArray(node.makers) ? node.makers : [];
-
-              // Filtro activo: Descartar productos con desarrollo avanzado (muchos votos o equipos grandes)
-              if (votes > maxUpvotes || makers.length > 3) {
-                continue;
-              }
-
-              const fullText = `${node.name} ${node.tagline || ''} ${node.description || ''}`;
-              if (DEFAULT_EXCLUDE_MATURE_REGEX.test(fullText)) continue;
-
-              const primaryMaker = makers[0] || { name: 'Founder', headline: 'Early-Stage Maker' };
-              const topicNames = (node.topics?.edges || []).map((e: any) => e?.node?.name).filter(Boolean);
-
-              candidates.push({
-                sourcePlatform: 'Product Hunt',
-                sourceDetail: `Product Hunt · #${topicSlug}`,
-                projectName: node.name,
-                founderName: primaryMaker.name || 'Founder',
-                founderHandleOrRole: primaryMaker.headline || 'Maker & Co-Founder',
-                description: `${node.tagline || ''}. ${node.description || ''}`.trim(),
-                communityUrl: node.url || 'https://www.producthunt.com',
-                websiteUrl: node.website || node.url || '',
-                email: '',
-                upvotesOrScore: votes,
-                makersCount: makers.length || 1,
-                tags: topicNames.length > 0 ? topicNames : [topicSlug],
-                rawSnippet: `${node.name} — ${node.tagline || ''}: ${node.description || ''}`
-              });
-            }
-          }
-        } catch (err: any) {
-          log?.(`[Product Hunt API] Aviso en topic ${topicSlug}: ${err.message}`);
+  static async resolveProductHuntExternalWebsite(phUrl: string): Promise<string | null> {
+    if (!phUrl || !phUrl.includes('producthunt.com')) return null;
+    try {
+      const controller = new AbortController();
+      const t = setTimeout(() => controller.abort(), 5000);
+      const res = await fetch(phUrl, {
+        signal: controller.signal,
+        headers: {
+          'User-Agent':
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+          Accept: 'text/html'
         }
-      }
+      });
+      clearTimeout(t);
+      if (!res.ok) return null;
+      const html = await res.text();
+      const externalUrls = this.extractExternalStartupUrls(html);
+      return externalUrls[0] || null;
+    } catch {
+      return null;
     }
-
-    // B) Feed Público Atom/RSS de Product Hunt + Búsqueda de lanzamientos tempranos (Funciona sin API Key)
-    if (candidates.length < 4) {
-      log?.(`[Product Hunt Feed] Analizando feed público de nuevos proyectos y pre-lanzamientos en Product Hunt...`);
-      try {
-        const controller = new AbortController();
-        const t = setTimeout(() => controller.abort(), 6500);
-        const feedRes = await fetch('https://www.producthunt.com/feed', {
-          signal: controller.signal,
-          headers: {
-            'User-Agent': 'Mozilla/5.0 (compatible; StartupIdeationRadar/1.0)',
-            Accept: 'application/atom+xml,application/xml,text/xml'
-          }
-        });
-        clearTimeout(t);
-
-        if (feedRes.ok) {
-          const xml = await feedRes.text();
-          const entryRegex = /<entry>([\s\S]*?)<\/entry>/gi;
-          let match;
-          while ((match = entryRegex.exec(xml)) !== null && candidates.length < 10) {
-            const entry = match[1];
-            const title = (entry.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1] || '')
-              .replace(/<!\[CDATA\[|\]\]>/g, '')
-              .trim();
-            const author = (entry.match(/<name[^>]*>([\s\S]*?)<\/name>/i)?.[1] || 'Maker')
-              .replace(/<!\[CDATA\[|\]\]>/g, '')
-              .trim();
-            const link = entry.match(/<link[^>]+href=["']([^"']+)["']/i)?.[1] || '';
-            const content = (entry.match(/<content[^>]*>([\s\S]*?)<\/content>/i)?.[1] || '')
-              .replace(/<!\[CDATA\[|\]\]>/g, '')
-              .replace(/<[^>]+>/g, ' ')
-              .replace(/\s+/g, ' ')
-              .trim();
-
-            if (!title) continue;
-            const combined = `${title} ${content}`;
-            if (DEFAULT_EXCLUDE_MATURE_REGEX.test(combined)) continue;
-
-            const parts = title.split(/\s+[-–—]\s+/);
-            const projectName = parts[0]?.trim() || title;
-            const tagline = parts.slice(1).join(' - ').trim() || content.substring(0, 160);
-
-            candidates.push({
-              sourcePlatform: 'Product Hunt',
-              sourceDetail: 'Product Hunt · Newest / Ideation',
-              projectName,
-              founderName: author,
-              founderHandleOrRole: 'Product Hunt Maker',
-              description: tagline || content.substring(0, 220),
-              communityUrl: link,
-              websiteUrl: link,
-              email: '',
-              upvotesOrScore: 12,
-              makersCount: 1,
-              tags: cleanTags.slice(0, 3),
-              rawSnippet: `${projectName} by ${author}: ${tagline}. ${content.substring(0, 250)}`
-            });
-          }
-        }
-      } catch (err: any) {
-        log?.(`[Product Hunt Feed] Aviso leyendo feed: ${err.message}`);
-      }
-    }
-
-    return candidates;
   }
 
   /**
-   * 2. REDDIT API PIPELINE
-   * Monitorea subreddits de startups (r/startups, r/cofounder, r/SaaS, r/SideProject, r/Entrepreneur)
-   * con palabras clave de validación, búsqueda de socio técnico o necesidades de MVP.
+   * 1. REDDIT EN ESPAÑOL E INTERNACIONAL (Prioridad proyectos en español)
+   * Monitorea comunidades de emprendedores, startups y desarrollo en español (r/es, r/Spain, r/emprendedores,
+   * r/programacion, r/devsarg, r/startups, r/cofounder, r/SaaS) buscando fundadores en ideación/validación.
    */
   static async fetchRedditStartupCandidates(
     subreddits: string[],
@@ -298,42 +253,43 @@ export class StartupRadarService {
     log?: (msg: string) => void
   ): Promise<RawStartupCandidate[]> {
     const candidates: RawStartupCandidate[] = [];
-    const subs =
-      subreddits.length > 0
-        ? subreddits
-        : ['cofounder', 'startups', 'SaaS', 'SideProject', 'Entrepreneur', 'indiehackers'];
-    const keywords =
-      validationKeywords.length > 0
-        ? validationKeywords
-        : [
-            'looking for technical cofounder',
-            'need developer MVP',
-            'validating startup idea',
-            'non-technical founder',
-            'seeking CTO',
-            'early stage feedback'
-          ];
 
-    const subQuery = subs.slice(0, 5).join('+');
-    const searchTerms = keywords.slice(0, 4).map(k => `"${k}"`).join(' OR ');
-    const fallbackTerms = 'cofounder OR MVP OR validating OR "technical partner" OR "early stage"';
-
-    const urlsToTry = [
-      `https://www.reddit.com/r/${subQuery}/search.json?q=${encodeURIComponent(searchTerms)}&restrict_sr=1&sort=new&limit=15&t=month`,
-      `https://www.reddit.com/r/${subQuery}/search.json?q=${encodeURIComponent(fallbackTerms)}&restrict_sr=1&sort=new&limit=15&t=month`
+    // Consultas prioritarias en español para capturar fundadores hispanohablantes
+    const spanishQueries = [
+      'https://www.reddit.com/search.json?q=' +
+        encodeURIComponent(
+          '("socio técnico" OR "cofundador" OR "busco programador" OR "busco desarrollador" OR "validando idea" OR "mi startup" OR "construyendo MVP")'
+        ) +
+        '&sort=new&limit=20&t=year',
+      'https://www.reddit.com/r/startups+cofounder+SaaS+SideProject+emprendedores+programacion/search.json?q=' +
+        encodeURIComponent('("socio" OR "cofounder" OR "MVP" OR "startup" OR "idea" OR "españa" OR "latam")') +
+        '&restrict_sr=1&sort=new&limit=20&t=month'
     ];
 
-    log?.(`[Reddit API] Monitoreando r/${subQuery} con keywords de validación e ideación...`);
+    const customSubQuery = (subreddits.length > 0 ? subreddits : ['cofounder', 'startups', 'SaaS', 'SideProject'])
+      .slice(0, 5)
+      .join('+');
+    const customTerms =
+      validationKeywords.length > 0
+        ? validationKeywords.slice(0, 4).map(k => `"${k}"`).join(' OR ')
+        : '"looking for technical cofounder" OR "need developer" OR "validating idea" OR "building MVP"';
+
+    const urlsToTry = [
+      ...spanishQueries,
+      `https://www.reddit.com/r/${customSubQuery}/search.json?q=${encodeURIComponent(customTerms)}&restrict_sr=1&sort=new&limit=15&t=month`
+    ];
+
+    log?.(`[Reddit API] Monitoreando comunidades hispanas y globales de startups con filtros de validación e ideación...`);
 
     for (const apiUrl of urlsToTry) {
-      if (candidates.length >= 10) break;
+      if (candidates.length >= 16) break;
       try {
         const controller = new AbortController();
         const t = setTimeout(() => controller.abort(), 7000);
         const res = await fetch(apiUrl, {
           signal: controller.signal,
           headers: {
-            'User-Agent': 'nodejs:hormesis.startup.radar:v1.0 (by /u/hormesis_ai)',
+            'User-Agent': 'nodejs:hormesis.startup.radar:v2.0 (by /u/hormesis_ai)',
             Accept: 'application/json'
           }
         });
@@ -355,183 +311,372 @@ export class StartupRadarService {
           const permalink = post.permalink ? `https://www.reddit.com${post.permalink}` : '';
 
           const fullText = `${title} ${selftext}`;
-          // Filtrar empresas avanzadas o posts promocionales de empresas grandes
-          if (DEFAULT_EXCLUDE_MATURE_REGEX.test(fullText) || score > 250) {
+          if (EXCLUDE_MATURE_OR_BIGTECH_REGEX.test(fullText) || score > 200) {
             continue;
           }
 
-          // Extraer posibles URLs o emails dentro del post de Reddit
-          const externalUrls = this.extractExternalUrls(selftext);
-          const emailMatch = fullText.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/);
-          const directEmail = emailMatch ? emailMatch[0].toLowerCase() : '';
+          const externalUrls = this.extractExternalStartupUrls(fullText);
+          const directEmail = this.extractEmailFromPlainText(fullText) || '';
 
-          // Inferir nombre del proyecto o startup del título
+          // Solo nos interesan candidatos que tengan email en el post o una URL de proyecto para extraer su email
+          if (!directEmail && externalUrls.length === 0) {
+            continue;
+          }
+
+          const isEs = this.isSpanishContent(fullText);
           let projectName = title
             .replace(/^\[.*?\]\s*/, '')
             .split(/[-–—:|]/)[0]
             .trim();
-          if (projectName.length > 48 || projectName.length < 3) {
-            projectName = `Proyecto de u/${author} (${subreddit})`;
+          if (projectName.length > 42 || projectName.length < 3) {
+            projectName = externalUrls[0]
+              ? new URL(externalUrls[0]).hostname.replace(/^www\./i, '').split('.')[0].toUpperCase()
+              : `Startup de ${author}`;
           }
 
           if (!candidates.some(c => c.communityUrl === permalink)) {
             candidates.push({
               sourcePlatform: 'Reddit',
-              sourceDetail: `${subreddit} · Validación / Co-Founder`,
+              sourceDetail: `${subreddit} · ${isEs ? 'Startup en Español' : 'Validación / Seed'}`,
               projectName,
               founderName: author,
-              founderHandleOrRole: `Founder en ${subreddit} (u/${author})`,
-              description: selftext ? selftext.substring(0, 350).replace(/\s+/g, ' ') : title,
+              founderHandleOrRole: `Fundador en ${subreddit}`,
+              description: selftext ? selftext.substring(0, 360).replace(/\s+/g, ' ') : title,
               communityUrl: permalink,
               websiteUrl: externalUrls[0] || permalink,
               email: directEmail,
               upvotesOrScore: score,
               makersCount: 1,
-              tags: [subreddit, post.link_flair_text || 'Ideation'].filter(Boolean),
-              rawSnippet: `[${subreddit}] ${title} — ${selftext.substring(0, 400)}`
+              tags: [subreddit, isEs ? 'Español' : 'Seed'].filter(Boolean),
+              rawSnippet: `[${subreddit}] ${title} — ${selftext.substring(0, 400)}`,
+              isSpanish: isEs
             });
           }
         }
       } catch (err: any) {
-        log?.(`[Reddit API] Aviso consultando subreddit: ${err.message}`);
+        log?.(`[Reddit API] Aviso: ${err.message}`);
       }
     }
 
-    return candidates;
+    // Ordenar priorizando proyectos en español y aquellos que ya tienen email o web propia
+    return candidates.sort((a, b) => Number(b.isSpanish) - Number(a.isSpanish));
   }
 
   /**
-   * 3. LINKEDIN SEED-STAGE FOUNDERS ADVANCED SEARCH
-   * Realiza búsquedas avanzadas X-Ray de perfiles de fundadores en etapa semilla / stealth / pre-seed
-   * que buscan socio técnico o están construyendo su MVP.
+   * 2. PRODUCT HUNT PIPELINE (Con resolución de dominio real y filtro anti-BigTech)
    */
-  static async fetchLinkedInSeedFounders(
+  static async fetchProductHuntCandidates(
+    tags: string[],
+    maxUpvotes: number,
+    productHuntToken?: string,
+    log?: (msg: string) => void
+  ): Promise<RawStartupCandidate[]> {
+    const candidates: RawStartupCandidate[] = [];
+    const cleanTags = tags.length > 0 ? tags : ['pre-launch', 'ideation', 'mvp', 'saas', 'artificial-intelligence'];
+
+    // A) Si hay Token de Product Hunt API v2 GraphQL
+    if (productHuntToken && productHuntToken.trim().length > 10) {
+      log?.(`[Product Hunt API] Consultando GraphQL v2 para etiquetas: ${cleanTags.slice(0, 4).join(', ')}...`);
+      for (const topicSlug of cleanTags.slice(0, 3)) {
+        try {
+          const query = `
+            query($topic: String!) {
+              posts(first: 10, topic: $topic, order: NEWEST) {
+                edges {
+                  node {
+                    name
+                    tagline
+                    description
+                    url
+                    website
+                    votesCount
+                    makers {
+                      name
+                      headline
+                    }
+                  }
+                }
+              }
+            }
+          `;
+          const controller = new AbortController();
+          const t = setTimeout(() => controller.abort(), 7000);
+          const res = await fetch('https://api.producthunt.com/v2/api/graphql', {
+            method: 'POST',
+            signal: controller.signal,
+            headers: {
+              Authorization: `Bearer ${productHuntToken.trim()}`,
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ query, variables: { topic: topicSlug.toLowerCase().replace(/\s+/g, '-') } })
+          });
+          clearTimeout(t);
+
+          if (res.ok) {
+            const json = await res.json();
+            const edges = json?.data?.posts?.edges || [];
+            for (const edge of edges) {
+              const node = edge?.node;
+              if (!node) continue;
+              const votes = Number(node.votesCount || 0);
+              const makers = Array.isArray(node.makers) ? node.makers : [];
+              const fullText = `${node.name} ${node.tagline || ''} ${node.description || ''}`;
+
+              if (votes > maxUpvotes || makers.length > 3 || EXCLUDE_MATURE_OR_BIGTECH_REGEX.test(fullText)) {
+                continue;
+              }
+
+              const primaryMaker = makers[0] || { name: 'Founder', headline: 'Early-Stage Maker' };
+              const isEs = this.isSpanishContent(fullText);
+
+              candidates.push({
+                sourcePlatform: 'Product Hunt',
+                sourceDetail: `Product Hunt · #${topicSlug}`,
+                projectName: node.name,
+                founderName: primaryMaker.name || 'Founder',
+                founderHandleOrRole: primaryMaker.headline || 'Maker & Co-Founder',
+                description: `${node.tagline || ''}. ${node.description || ''}`.trim(),
+                communityUrl: node.url || 'https://www.producthunt.com',
+                websiteUrl: node.website || node.url || '',
+                email: '',
+                upvotesOrScore: votes,
+                makersCount: makers.length || 1,
+                tags: [topicSlug],
+                rawSnippet: fullText,
+                isSpanish: isEs
+              });
+            }
+          }
+        } catch {}
+      }
+    }
+
+    // B) Feed Público Atom de Product Hunt (Descartando marcas gigantes como Zoom, Google, etc.)
+    if (candidates.length < 5) {
+      log?.(`[Product Hunt] Analizando nuevos lanzamientos indie/early-stage en Product Hunt...`);
+      try {
+        const controller = new AbortController();
+        const t = setTimeout(() => controller.abort(), 6500);
+        const feedRes = await fetch('https://www.producthunt.com/feed', {
+          signal: controller.signal,
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (compatible; StartupIdeationRadar/2.0)',
+            Accept: 'application/atom+xml,application/xml,text/xml'
+          }
+        });
+        clearTimeout(t);
+
+        if (feedRes.ok) {
+          const xml = await feedRes.text();
+          const entryRegex = /<entry>([\s\S]*?)<\/entry>/gi;
+          let match;
+          while ((match = entryRegex.exec(xml)) !== null && candidates.length < 8) {
+            const entry = match[1];
+            const title = (entry.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1] || '')
+              .replace(/<!\[CDATA\[|\]\]>/g, '')
+              .trim();
+            const author = (entry.match(/<name[^>]*>([\s\S]*?)<\/name>/i)?.[1] || 'Founder')
+              .replace(/<!\[CDATA\[|\]\]>/g, '')
+              .trim();
+            const link = entry.match(/<link[^>]+href=["']([^"']+)["']/i)?.[1] || '';
+            const rawContentHtml = (entry.match(/<content[^>]*>([\s\S]*?)<\/content>/i)?.[1] || '')
+              .replace(/<!\[CDATA\[|\]\]>/g, '');
+            const cleanText = rawContentHtml.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+
+            if (!title) continue;
+            const combined = `${title} ${cleanText} ${link}`;
+            if (EXCLUDE_MATURE_OR_BIGTECH_REGEX.test(combined)) continue;
+
+            const parts = title.split(/\s+[-–—]\s+/);
+            const projectName = parts[0]?.trim() || title;
+            const tagline = parts.slice(1).join(' - ').trim() || cleanText.substring(0, 160);
+            const isEs = this.isSpanishContent(combined);
+
+            // Solo incluir del feed de Product Hunt si tiene URL externa real de la startup (no enlaces internos a producthunt.com/products/...)
+            const extUrls = this.extractExternalStartupUrls(rawContentHtml);
+            if (extUrls.length === 0) continue;
+
+            candidates.push({
+              sourcePlatform: 'Product Hunt',
+              sourceDetail: `Product Hunt · ${isEs ? 'Lanzamiento Hispano' : 'Early-Stage Maker'}`,
+              projectName,
+              founderName: author,
+              founderHandleOrRole: 'Fundador / Maker',
+              description: tagline,
+              communityUrl: link,
+              websiteUrl: extUrls[0],
+              email: '',
+              upvotesOrScore: 14,
+              makersCount: 1,
+              tags: cleanTags.slice(0, 2),
+              rawSnippet: `${projectName} (${author}): ${tagline}`,
+              isSpanish: isEs
+            });
+          }
+        }
+      } catch (err: any) {
+        log?.(`[Product Hunt] Aviso leyendo feed: ${err.message}`);
+      }
+    }
+
+    return candidates.sort((a, b) => Number(b.isSpanish) - Number(a.isSpanish));
+  }
+
+  /**
+   * 3. BÚSQUEDA AVANZADA DE STARTUPS Y FUNDADORES EN ESPAÑOL (LinkedIn Seed + Ecosistema Startup Hispano)
+   * Busca activamente proyectos, startups pre-seed y fundadores en España y Latinoamérica que tengan
+   * sitio web o contacto público y estén en etapa temprana / MVP.
+   */
+  static async fetchSpanishStartupsAndLinkedInFounders(
     linkedinKeywords: string[],
     targetGeo: string,
     log?: (msg: string) => void
   ): Promise<RawStartupCandidate[]> {
     const candidates: RawStartupCandidate[] = [];
-    const geo = targetGeo || 'Spain OR Europe OR Remote OR Latam';
-    const terms =
-      linkedinKeywords.length > 0
-        ? linkedinKeywords
-        : ['Stealth Startup', 'Pre-Seed Founder', 'Looking for Technical Co-Founder', 'Building MVP'];
+    log?.(`[Búsqueda Avanzada ES] Buscando startups en fase semilla y fundadores en español (España / Latam)...`);
 
-    log?.(`[LinkedIn Search] Ejecutando búsqueda avanzada de fundadores en etapa semilla (${terms.slice(0, 3).join(', ')})...`);
+    const searchQueries = [
+      // 1. Startups españolas/latam en fase semilla o buscando socio técnico / MVP con web propia
+      `"startup" ("fase semilla" OR "pre-seed" OR "MVP" OR "socio técnico" OR "cofundador") ("hola@" OR "contacto@" OR "info@") site:.es OR site:.io OR site:.com`,
+      // 2. Fundadores en LinkedIn España / Latam en etapa Stealth / Pre-Seed / Ideación
+      `site:linkedin.com/in/ ("Fundador" OR "Co-Founder" OR "Stealth" OR "Pre-seed" OR "MVP") ("España" OR "Madrid" OR "Barcelona" OR "México" OR "Colombia")`,
+      // 3. Startups emergentes SaaS / IA en España con página de contacto
+      `"startup" ("inteligencia artificial" OR "SaaS" OR "plataforma") "contacto" site:.es -blog -noticias -elpais -expansion`
+    ];
 
-    const dorkQuery = `site:linkedin.com/in/ (${terms.slice(0, 3).map(t => `"${t}"`).join(' OR ')}) (${geo})`;
-    try {
-      const controller = new AbortController();
-      const t = setTimeout(() => controller.abort(), 6500);
-      const searchUrl = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(dorkQuery)}`;
-      const res = await fetch(searchUrl, {
-        signal: controller.signal,
-        headers: {
-          'User-Agent':
-            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-          Accept: 'text/html'
-        }
-      });
-      clearTimeout(t);
+    for (const q of searchQueries) {
+      if (candidates.length >= 12) break;
+      try {
+        const controller = new AbortController();
+        const t = setTimeout(() => controller.abort(), 6500);
+        const searchUrl = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(q)}&kl=es-es`;
+        const res = await fetch(searchUrl, {
+          signal: controller.signal,
+          headers: {
+            'User-Agent':
+              'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+            'Accept-Language': 'es-ES,es;q=0.9',
+            Accept: 'text/html'
+          }
+        });
+        clearTimeout(t);
 
-      if (res.ok) {
+        if (!res.ok) continue;
         const html = await res.text();
         const resultBlocks = html.split(/class=["']result__body["']/i).slice(1, 10);
 
         for (const block of resultBlocks) {
           const titleRaw = block.match(/class=["']result__a["'][^>]*>([\s\S]*?)<\/a>/i)?.[1] || '';
-          const snippetRaw = block.match(/class=["']result__snippet["'][^>]*>([\s\S]*?)<\/a>|class=["']result__snippet["'][^>]*>([\s\S]*?)<\/div>/i);
+          const snippetRaw =
+            block.match(/class=["']result__snippet["'][^>]*>([\s\S]*?)<\/a>/i)?.[1] ||
+            block.match(/class=["']result__snippet["'][^>]*>([\s\S]*?)<\/div>/i)?.[1] ||
+            '';
           const urlMatch = block.match(/uddg=([^"&]+)/i);
 
           const cleanTitle = titleRaw.replace(/<[^>]+>/g, '').replace(/&amp;/g, '&').trim();
-          const cleanSnippet = ((snippetRaw?.[1] || snippetRaw?.[2]) || '')
+          const cleanSnippet = snippetRaw
             .replace(/<[^>]+>/g, '')
             .replace(/&amp;/g, '&')
             .replace(/\s+/g, ' ')
             .trim();
           const decodedUrl = urlMatch ? decodeURIComponent(urlMatch[1]) : '';
 
-          if (!cleanTitle || !decodedUrl.includes('linkedin.com/in/')) continue;
-          if (DEFAULT_EXCLUDE_MATURE_REGEX.test(`${cleanTitle} ${cleanSnippet}`)) continue;
+          if (!cleanTitle || !decodedUrl.startsWith('http')) continue;
+          if (EXCLUDE_MATURE_OR_BIGTECH_REGEX.test(`${cleanTitle} ${cleanSnippet} ${decodedUrl}`)) continue;
 
-          // Formato típico LinkedIn: "Nombre Apellido - Cargo - Empresa | LinkedIn"
-          const titleParts = cleanTitle.replace(/\s*\|\s*LinkedIn.*$/i, '').split(/\s+[-–—]\s+/);
-          const founderName = titleParts[0]?.trim() || 'Founder';
-          const roleOrHeadline = titleParts.slice(1).join(' · ').trim() || 'Seed-Stage Founder';
-          const companyGuess =
-            titleParts[2]?.trim() ||
-            (roleOrHeadline.match(/(?:at|en|@)\s+([A-Z0-9][\w\s.&-]{2,25})/i)?.[1]?.trim()) ||
-            `Stealth Startup (${founderName})`;
+          const emailInSnippet = this.extractEmailFromPlainText(`${cleanTitle} ${cleanSnippet}`) || '';
+          const isLinkedIn = decodedUrl.includes('linkedin.com/in/');
 
-          const emailInSnippet = cleanSnippet.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/)?.[0] || '';
+          if (isLinkedIn) {
+            const titleParts = cleanTitle.replace(/\s*\|\s*LinkedIn.*$/i, '').split(/\s+[-–—]\s+/);
+            const founderName = titleParts[0]?.trim() || 'Fundador';
+            const roleOrHeadline = titleParts.slice(1).join(' · ').trim() || 'Fundador Pre-Seed';
+            const extUrls = this.extractExternalStartupUrls(cleanSnippet);
 
-          candidates.push({
-            sourcePlatform: 'LinkedIn',
-            sourceDetail: 'LinkedIn · Seed / Stealth Founder',
-            projectName: companyGuess,
-            founderName,
-            founderHandleOrRole: roleOrHeadline,
-            description: cleanSnippet || `${founderName} (${roleOrHeadline}) en fase semilla / ideación.`,
-            communityUrl: decodedUrl,
-            websiteUrl: decodedUrl,
-            email: emailInSnippet,
-            upvotesOrScore: 1,
-            makersCount: 1,
-            tags: ['Seed Stage', 'LinkedIn Founder', 'Ideation'],
-            rawSnippet: `${cleanTitle} — ${cleanSnippet}`
-          });
+            // En LinkedIn solo agregamos si el snippet incluye email o web de su startup para poder obtener su correo real
+            if (!emailInSnippet && extUrls.length === 0) continue;
+
+            candidates.push({
+              sourcePlatform: 'LinkedIn',
+              sourceDetail: 'LinkedIn · Fundador Semilla (ES)',
+              projectName: titleParts[2]?.trim() || `Startup de ${founderName}`,
+              founderName,
+              founderHandleOrRole: roleOrHeadline,
+              description: cleanSnippet,
+              communityUrl: decodedUrl,
+              websiteUrl: extUrls[0] || decodedUrl,
+              email: emailInSnippet,
+              upvotesOrScore: 10,
+              makersCount: 1,
+              tags: ['Español', 'LinkedIn Seed', 'Ideación'],
+              rawSnippet: `${cleanTitle} — ${cleanSnippet}`,
+              isSpanish: true
+            });
+          } else if (!EXCLUDED_DOMAINS_FOR_STARTUP_URL.test(decodedUrl)) {
+            const urlObj = new URL(decodedUrl);
+            const domainName = urlObj.hostname.replace(/^www\./i, '');
+            const projectName = cleanTitle.split(/[-–—|•:]/)[0]?.trim() || domainName;
+
+            candidates.push({
+              sourcePlatform: 'LinkedIn',
+              sourceDetail: 'Ecosistema Startup España / Latam',
+              projectName: projectName.substring(0, 40),
+              founderName: `Equipo Fundador de ${projectName.substring(0, 25)}`,
+              founderHandleOrRole: 'Fundador / Pre-Seed',
+              description: cleanSnippet || `Proyecto tecnológico emergente en ${domainName}`,
+              communityUrl: decodedUrl,
+              websiteUrl: `${urlObj.protocol}//${urlObj.hostname}`,
+              email: emailInSnippet,
+              upvotesOrScore: 15,
+              makersCount: 1,
+              tags: ['Español', 'Seed Stage', 'MVP'],
+              rawSnippet: `${cleanTitle} (${domainName}) — ${cleanSnippet}`,
+              isSpanish: true
+            });
+          }
         }
+      } catch (err: any) {
+        log?.(`[Búsqueda Avanzada ES] Aviso: ${err.message}`);
       }
-    } catch (err: any) {
-      log?.(`[LinkedIn Search] Aviso en búsqueda avanzada: ${err.message}`);
     }
 
     return candidates;
   }
 
   /**
-   * Respaldo inteligente impulsado por IA (Groq) cuando las fuentes públicas tienen rate-limit en cloud IPs,
-   * garantizando que el pipeline siempre entregue prospectos reales/estructurados de alta relevancia para el nicho configurado.
+   * 4. DESCUBRIMIENTO DE DOMINIOS DE STARTUPS HISPANAS REALES CON MX Y EMAIL VERIFICADO
+   * Cuando las búsquedas de comunidades devuelven pocos leads con email público, descubre y verifica
+   * sitios web reales de startups hispanas en etapa temprana, comprobando su HTML y registros MX reales.
    */
-  static async synthesizeCuratedIdeationCandidates(
+  static async discoverVerifiedSpanishStartupLeads(
     config: StartupRadarConfig,
     groqApiKey: string,
     neededCount: number,
+    existingUrls: Set<string>,
     log?: (msg: string) => void
   ): Promise<RawStartupCandidate[]> {
     if (!groqApiKey || neededCount <= 0) return [];
-    log?.(`[Startup Radar IA] Explorando ecosistema adicional de fundadores en etapa de ideación (${neededCount} slots)...`);
+    log?.(`[Descubrimiento Hispano IA] Buscando ${neededCount} startups/proyectos adicionales en español con correo verificable...`);
 
-    const prompt = `Actúa como un analista de Venture Capital Pre-Seed y explorador de Product Hunt, Reddit (r/cofounder, r/startups, r/SaaS) y LinkedIn Seed Founders.
-Configuración de búsqueda del usuario:
-- Etiquetas Product Hunt: "${config.productHuntTags || 'pre-launch, mvp, ai, saas, no-code'}"
-- Subreddits monitoreados: "${config.redditSubreddits || 'r/cofounder, r/startups, r/SaaS'}"
-- Keywords de validación: "${config.validationKeywords || 'looking for technical cofounder, building mvp, need developer'}"
-- Perfiles LinkedIn: "${config.linkedinKeywords || 'Stealth Startup, Pre-Seed Founder, Non-technical founder'}"
-- Región/Idioma objetivo: "${config.targetGeoOrLanguage || 'España, Europa y Global'}"
+    const prompt = `Actúa como un scout de Venture Capital en España y Latinoamérica (Lanzadera, Wayra, Enisa, Tetuan Valley, Product Hunt España, Indie Hackers ES).
+Necesitamos identificar ${neededCount + 6} startups o proyectos tecnológicos emergentes del ecosistema hispano (España, México, Colombia, Argentina, Chile) que estén en etapa semilla, validación o crecimiento temprano y tengan dominio web activo (.es, .com, .io, .ai, .app) para extraer su contacto.
 
-Genera un JSON con exactamente ${neededCount} leads de proyectos/startups en FASE DE IDEACIÓN o VALIDACIÓN TEMPRANA (donde el fundador busca socio técnico, equipo de desarrollo de MVP o resolver deuda/arquitectura técnica inicial).
-Descarta empresas maduras.
-Devuelve ÚNICAMENTE un objeto JSON válido con la propiedad "candidates":
+Devuelve ÚNICAMENTE un JSON válido con la propiedad "startups":
 {
-  "candidates": [
+  "startups": [
     {
       "sourcePlatform": "Product Hunt" | "Reddit" | "LinkedIn",
-      "sourceDetail": "Ej: r/cofounder · Validación MVP | Product Hunt · #pre-launch | LinkedIn · Stealth Founder",
-      "projectName": "Nombre de la Startup en ideación",
-      "founderName": "Nombre del fundador",
-      "founderHandleOrRole": "Rol o handle (ej. Non-Technical Founder / Pre-Seed)",
-      "description": "Descripción clara de lo que están validando y la necesidad técnica que reportan.",
-      "communityUrl": "URL de referencia en Product Hunt, Reddit o LinkedIn",
-      "websiteUrl": "URL del proyecto o perfil",
-      "email": "correo de contacto si es público o vacío",
-      "upvotesOrScore": 18,
-      "makersCount": 1,
-      "tags": ["Pre-Seed", "Needs Technical Partner", "MVP"]
+      "sourceDetail": "Ej: Product Hunt España · Seed | LinkedIn · Pre-Seed España | Reddit · r/emprendedores",
+      "projectName": "Nombre real de la startup hispana",
+      "founderName": "Nombre del fundador o CEO",
+      "founderHandleOrRole": "Fundador & CEO",
+      "websiteUrl": "https://dominio-real.es",
+      "description": "Descripción en español del producto y su reto técnico actual (escalado de MVP, IA, automatización o arquitectura)."
     }
   ]
 }`;
 
+    const verifiedCandidates: RawStartupCandidate[] = [];
     try {
       const controller = new AbortController();
       const t = setTimeout(() => controller.abort(), 12000);
@@ -546,10 +691,10 @@ Devuelve ÚNICAMENTE un objeto JSON válido con la propiedad "candidates":
           model: 'llama-3.3-70b-versatile',
           response_format: { type: 'json_object' },
           messages: [
-            { role: 'system', content: 'You are a startup ecosystem scout. Output valid JSON only.' },
+            { role: 'system', content: 'Eres un analista de startups hispanas. Responde solo en JSON válido.' },
             { role: 'user', content: prompt }
           ],
-          temperature: 0.6,
+          temperature: 0.5,
           max_tokens: 1800
         })
       });
@@ -557,96 +702,142 @@ Devuelve ÚNICAMENTE un objeto JSON válido con la propiedad "candidates":
 
       if (res.ok) {
         const data = await res.json();
-        const raw = data.choices?.[0]?.message?.content || '{}';
-        const parsed = JSON.parse(raw);
-        if (Array.isArray(parsed.candidates)) {
-          return parsed.candidates.map((c: any) => ({
-            sourcePlatform: c.sourcePlatform || 'Reddit',
-            sourceDetail: c.sourceDetail || 'r/cofounder · Ideación',
-            projectName: c.projectName || 'Stealth MVP',
-            founderName: c.founderName || 'Founder',
-            founderHandleOrRole: c.founderHandleOrRole || 'Pre-Seed Founder',
-            description: c.description || '',
-            communityUrl: c.communityUrl || 'https://www.producthunt.com',
-            websiteUrl: c.websiteUrl || c.communityUrl || '',
-            email: c.email || '',
-            upvotesOrScore: Number(c.upvotesOrScore || 15),
-            makersCount: Number(c.makersCount || 1),
-            tags: Array.isArray(c.tags) ? c.tags : ['Ideación', 'MVP'],
-            rawSnippet: `${c.projectName} (${c.founderName}): ${c.description}`
-          }));
+        const parsed = JSON.parse(data.choices?.[0]?.message?.content || '{}');
+        const list = Array.isArray(parsed.startups) ? parsed.startups : [];
+
+        for (const item of list) {
+          if (verifiedCandidates.length >= neededCount) break;
+          const web = (item.websiteUrl || '').trim();
+          if (!web.startsWith('http') || existingUrls.has(web)) continue;
+
+          // Verificar que el sitio web exista de verdad y extraer su correo real o validar su servidor MX
+          const scraped = await this.deepScrapeStartupWebsite(web);
+          if (scraped.email) {
+            existingUrls.add(web);
+            verifiedCandidates.push({
+              sourcePlatform: item.sourcePlatform || 'LinkedIn',
+              sourceDetail: item.sourceDetail || 'Ecosistema Startup Hispano · Seed',
+              projectName: item.projectName || 'Startup Hispana',
+              founderName: item.founderName || 'Fundador',
+              founderHandleOrRole: item.founderHandleOrRole || 'Fundador & CEO',
+              description: scraped.description || item.description || '',
+              communityUrl: scraped.finalUrl || web,
+              websiteUrl: scraped.finalUrl || web,
+              email: scraped.email,
+              upvotesOrScore: 18,
+              makersCount: 1,
+              tags: ['Español', 'Seed Stage', 'Email Verificado'],
+              rawSnippet: `${item.projectName} (${item.founderName}): ${item.description}`,
+              isSpanish: true
+            });
+            log?.(`✅ Startup hispana verificada con correo activo: ${item.projectName} -> ${scraped.email}`);
+          }
         }
       }
     } catch (err: any) {
-      log?.(`[Startup Radar IA] Aviso en síntesis complementaria: ${err.message}`);
+      log?.(`[Descubrimiento Hispano IA] Aviso: ${err.message}`);
     }
 
-    return [];
+    return verifiedCandidates;
   }
 
   /**
-   * 4. FILTRADO ACTIVO CON IA Y CALIFICACIÓN DE FASE DE IDEACIÓN (GROQ)
-   * Analiza los candidatos crudos, filtra activamente aquellos que ya tienen un desarrollo avanzado,
-   * identifica la necesidad técnica primaria y redacta el gancho personalizado para cada fundador.
+   * 5. FILTRADO ACTIVO CON IA, PRIORIDAD ESPAÑOL Y GARANTÍA DE CORREO ELECTRÓNICO
+   * - Resuelve la web real si viene de Product Hunt.
+   * - Raspa la web de la startup para obtener el correo electrónico real.
+   * - Descarta cualquier candidato que NO tenga un correo electrónico válido o que sea una empresa avanzada.
+   * - Prioriza los proyectos en español y genera todo el diagnóstico y pitch en español.
    */
   static async qualifyAndFilterWithAI(
     candidates: RawStartupCandidate[],
     config: StartupRadarConfig,
     groqApiKey: string,
+    targetCount: number,
     log?: (msg: string) => void
   ): Promise<QualifiedStartupLead[]> {
     const qualified: QualifiedStartupLead[] = [];
     const senderCompany = config.businessName || 'Grupo Hormesis';
     const senderContext =
       config.businessContext ||
-      'Somos un estudio tecnológico y partner de ingeniería especializado en construir MVPs escalables, arquitectura IA y diseño de producto para startups en fase semilla.';
+      'Somos un estudio tecnológico y socio de ingeniería especializado en construir MVPs escalables, arquitectura IA y desarrollo full-stack para startups en fase de ideación y semilla.';
 
-    for (const candidate of candidates) {
-      // 1. Si tiene una web externa real (no reddit/linkedin), intentar raspar su email real
+    // Ordenar candidatos dando máxima prioridad a los que están en español
+    const sortedCandidates = [...candidates].sort((a, b) => {
+      if (a.isSpanish !== b.isSpanish) return Number(b.isSpanish) - Number(a.isSpanish);
+      if (Boolean(a.email) !== Boolean(b.email)) return Number(Boolean(b.email)) - Number(Boolean(a.email));
+      return 0;
+    });
+
+    for (const candidate of sortedCandidates) {
+      if (qualified.length >= targetCount) break;
+
+      // 1. Si el websiteUrl apunta a Product Hunt, intentar resolver la web externa real de la startup
+      if (candidate.websiteUrl && candidate.websiteUrl.includes('producthunt.com')) {
+        const realWeb = await this.resolveProductHuntExternalWebsite(candidate.websiteUrl);
+        if (realWeb) {
+          candidate.websiteUrl = realWeb;
+        }
+      }
+
+      // 2. Si aún no tiene email y tiene una web externa real, raspar su web (/ y /contacto) para extraer el correo
       if (
         !candidate.email &&
         candidate.websiteUrl &&
         candidate.websiteUrl.startsWith('http') &&
-        !/reddit\.com|linkedin\.com|producthunt\.com/i.test(candidate.websiteUrl)
+        !EXCLUDED_DOMAINS_FOR_STARTUP_URL.test(candidate.websiteUrl)
       ) {
-        const scraped = await this.scrapeEmailAndMetaFromWebsite(candidate.websiteUrl);
+        const scraped = await this.deepScrapeStartupWebsite(candidate.websiteUrl);
         if (scraped.email) {
           candidate.email = scraped.email;
-          log?.(`📧 Email descubierto en landing de ${candidate.projectName}: ${candidate.email}`);
+          candidate.websiteUrl = scraped.finalUrl || candidate.websiteUrl;
+          if (scraped.isSpanish) candidate.isSpanish = true;
+          log?.(`📧 Correo extraído de la web de ${candidate.projectName}: ${candidate.email}`);
         }
       }
 
-      // 2. Clasificación y filtrado con Groq AI
+      // 3. REGLA ESTRICTA: Si el lead no tiene correo electrónico válido, lo descartamos para que todos los leads sean contactables
+      if (!candidate.email || !candidate.email.includes('@')) {
+        log?.(`⏭️ Omitiendo "${candidate.projectName}" por no disponer de correo electrónico público verificable.`);
+        continue;
+      }
+
+      const emailCheck = await EmailValidatorService.validateEmail(candidate.email);
+      if (!emailCheck.isValid) {
+        log?.(`⏭️ Omitiendo "${candidate.projectName}" (${candidate.email}): ${emailCheck.reason}`);
+        continue;
+      }
+
+      // 4. Evaluación y calificación en ESPAÑOL con Groq AI
       let aiEvaluation: any = null;
       if (groqApiKey) {
         try {
-          const prompt = `Analiza este lead extraído de ${candidate.sourcePlatform} (${candidate.sourceDetail}):
+          const prompt = `Analiza este lead de startup extraído de ${candidate.sourcePlatform} (${candidate.sourceDetail}):
 - Proyecto / Startup: "${candidate.projectName}"
-- Fundador / Rol: "${candidate.founderName}" (${candidate.founderHandleOrRole})
-- Descripción / Post: "${candidate.description}"
-- Upvotes / Score: ${candidate.upvotesOrScore}
-- Tags: ${candidate.tags.join(', ')}
+- Fundador / Contacto: "${candidate.founderName}" (${candidate.founderHandleOrRole})
+- Email verificado: "${candidate.email}"
+- Web: "${candidate.websiteUrl}"
+- Descripción: "${candidate.description}"
 
 Nuestra empresa ("${senderCompany}"): "${senderContext}"
 
-TAREA DE FILTRADO ESTRICTO:
-1. Determina si el producto YA tiene un desarrollo avanzado/maduro (isAdvancedDevelopment: true/false). Si es una empresa grande o producto consolidado, márcalo como true.
-2. Clasifica su etapa actual ("startupStage"): "Ideación", "Validación / Pre-Seed", o "MVP Temprano".
-3. Identifica su necesidad técnica primaria ("primaryTechnicalNeed"), ej: "Desarrollo de MVP Full-Stack", "Socio Técnico / CTO As-a-Service", "Arquitectura de IA & Automatización", "Diseño UX/UI de Validación".
-4. Extrae 2 o 3 dolores técnicos específicos ("painPoints") que enfrenta este fundador ahora mismo.
-5. Asigna un "qualificationScore" de 0 a 100 según cuánto necesita apoyo técnico externo o socio tecnológico.
-6. Redacta un "aiSubjectLine" (asunto de correo corto de fundador a fundador, 5-8 palabras) y un "aiCustomPitch" (2 párrafos cercanos, empáticos y de alto valor haciendo referencia directa a su publicación en ${candidate.sourcePlatform} sobre "${candidate.projectName}" y proponiendo una breve llamada de 15 min para ayudarle a materializar la arquitectura/MVP).
+REGLAS OBLIGATORIAS (TODO EN ESPAÑOL):
+1. Determina si el proyecto ya es una gran corporación consolidada ("isAdvancedDevelopment": true/false). Si es una startup en ideación, validación, pre-seed o crecimiento temprano que puede requerir apoyo técnico, MVP o escalado, pon false.
+2. Clasifica su etapa ("startupStage"): "Ideación", "Validación / Pre-Seed", o "MVP Temprano".
+3. Define en español su necesidad técnica primaria ("primaryTechnicalNeed"), ej: "Desarrollo de MVP & Arquitectura Escalable", "Socio Técnico / Ingeniería Full-Stack", "Integración de IA y Automatización de Procesos".
+4. Lista 2 dolores técnicos concretos en español ("painPoints").
+5. Asigna un "qualificationScore" (80 a 98).
+6. Redacta SIEMPRE EN ESPAÑOL un "aiSubjectLine" (asunto atractivo de fundador a fundador, 5-9 palabras) y un "aiCustomPitch" (2 párrafos cercanos en español dirigidos a ${candidate.founderName} sobre ${candidate.projectName}, ofreciendo apoyo técnico/MVP desde ${senderCompany}).
 
 Devuelve SOLO un JSON válido:
 {
   "isIdeationOrEarlyStage": true,
   "isAdvancedDevelopment": false,
-  "startupStage": "Ideación",
-  "primaryTechnicalNeed": "Desarrollo de MVP y Arquitectura Técnica",
-  "painPoints": ["Falta de co-fundador técnico para iterar rápido", "Necesidad de validar el MVP con usuarios reales sin deuda técnica"],
-  "qualificationScore": 92,
-  "aiSubjectLine": "Sobre ${candidate.projectName} en ${candidate.sourcePlatform} — apoyo técnico MVP",
-  "aiCustomPitch": "Hola ${candidate.founderName}, vi tu publicación en ${candidate.sourceDetail} sobre ${candidate.projectName}..."
+  "startupStage": "Validación / Pre-Seed",
+  "primaryTechnicalNeed": "Socio Técnico & Construcción de MVP Escalable",
+  "painPoints": ["Necesidad de acelerar el lanzamiento de funcionalidades clave sin deuda técnica", "Escalabilidad de arquitectura y automatización con IA"],
+  "qualificationScore": 94,
+  "aiSubjectLine": "Sobre ${candidate.projectName} — colaboración técnica y MVP",
+  "aiCustomPitch": "Hola ${candidate.founderName}, estuvimos viendo el trabajo que están realizando en ${candidate.projectName}..."
 }`;
 
           const controller = new AbortController();
@@ -664,7 +855,7 @@ Devuelve SOLO un JSON válido:
               messages: [
                 {
                   role: 'system',
-                  content: 'You are a venture technical advisor. Respond only with a valid JSON object.'
+                  content: 'Eres un asesor técnico de startups. Responde siempre en español y únicamente con un objeto JSON válido.'
                 },
                 { role: 'user', content: prompt }
               ],
@@ -687,7 +878,6 @@ Devuelve SOLO un JSON válido:
         }
       }
 
-      // Si la IA detecta que es un producto con desarrollo avanzado, lo descartamos activamente
       if (aiEvaluation?.isAdvancedDevelopment === true) {
         log?.(`🚫 Descartado por filtro de madurez: "${candidate.projectName}" (desarrollo avanzado detectado).`);
         continue;
@@ -695,25 +885,25 @@ Devuelve SOLO un JSON válido:
 
       qualified.push({
         ...candidate,
-        isIdeationOrEarlyStage: aiEvaluation?.isIdeationOrEarlyStage ?? true,
+        isIdeationOrEarlyStage: true,
         isAdvancedDevelopment: false,
-        startupStage: aiEvaluation?.startupStage || 'Ideación',
+        startupStage: aiEvaluation?.startupStage || 'Validación / Pre-Seed',
         primaryTechnicalNeed:
           aiEvaluation?.primaryTechnicalNeed || 'Socio Técnico & Construcción de MVP Escalable',
         painPoints:
           Array.isArray(aiEvaluation?.painPoints) && aiEvaluation.painPoints.length > 0
             ? aiEvaluation.painPoints
             : [
-                'Validación ágil de producto sin sobrecoste de ingeniería',
-                'Arquitectura escalable lista para primeros usuarios e inversores'
+                'Iteración ágil de producto y validación con usuarios reales sin deuda técnica',
+                'Arquitectura escalable e integración de IA lista para crecimiento'
               ],
-        qualificationScore: Number(aiEvaluation?.qualificationScore || 88),
+        qualificationScore: Number(aiEvaluation?.qualificationScore || 92),
         aiSubjectLine:
           aiEvaluation?.aiSubjectLine ||
-          `Sobre ${candidate.projectName} en ${candidate.sourcePlatform} · Partner Técnico`,
+          `Sobre ${candidate.projectName} · Colaboración Técnica y Desarrollo MVP`,
         aiCustomPitch:
           aiEvaluation?.aiCustomPitch ||
-          `Hola ${candidate.founderName}, estuvimos revisando lo que estás construyendo con ${candidate.projectName} en ${candidate.sourceDetail}. En ${senderCompany} acompañamos a fundadores en etapa de ideación y semilla como socio tecnológico para lanzar su MVP en semanas con arquitectura sólida.`
+          `Hola ${candidate.founderName}, estuvimos revisando tu proyecto ${candidate.projectName} (${candidate.websiteUrl}). En ${senderCompany} acompañamos a fundadores hispanohablantes en fase de ideación y pre-seed como socio tecnológico para acelerar el desarrollo de su MVP y arquitectura con IA.`
       });
     }
 

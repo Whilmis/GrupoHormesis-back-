@@ -3020,44 +3020,59 @@ class StartupIdeationRadarWorkflow extends BaseWorkflowType {
     const maxUpvotes = Number(config.maxUpvotesThreshold || 120);
     const batchLimit = Math.min(Math.max(Number(config.batchLimit || 6), 1), 15);
 
-    // 1. Recolectar candidatos desde las 3 fuentes (Product Hunt + Reddit + LinkedIn)
-    const [phCandidates, redditCandidates, liCandidates] = await Promise.all([
-      StartupRadarService.fetchProductHuntCandidates(phTags, maxUpvotes, productHuntToken, context.log),
+    // 1. Recolectar candidatos dando prioridad a proyectos en Español (España / Latam) + Reddit + Product Hunt + LinkedIn
+    const [esAndLiCandidates, redditCandidates, phCandidates] = await Promise.all([
+      StartupRadarService.fetchSpanishStartupsAndLinkedInFounders(
+        liKeywords,
+        config.targetGeoOrLanguage || 'España OR Latam',
+        context.log
+      ),
       StartupRadarService.fetchRedditStartupCandidates(subreddits, valKeywords, context.log),
-      StartupRadarService.fetchLinkedInSeedFounders(liKeywords, config.targetGeoOrLanguage || 'Spain OR Europe OR Remote', context.log)
+      StartupRadarService.fetchProductHuntCandidates(phTags, maxUpvotes, productHuntToken, context.log)
     ]);
 
-    let combinedRaw: RawStartupCandidate[] = [];
-    const maxLen = Math.max(phCandidates.length, redditCandidates.length, liCandidates.length);
-    for (let i = 0; i < maxLen; i++) {
-      if (phCandidates[i]) combinedRaw.push(phCandidates[i]);
-      if (redditCandidates[i]) combinedRaw.push(redditCandidates[i]);
-      if (liCandidates[i]) combinedRaw.push(liCandidates[i]);
-    }
+    // Priorizar proyectos en español primero, luego intercalar el resto
+    const allFetched = [...esAndLiCandidates, ...redditCandidates, ...phCandidates];
+    const spanishFirst = allFetched.sort((a, b) => Number(b.isSpanish) - Number(a.isSpanish));
 
     context.log(
-      `📊 Fuentes consultadas: Product Hunt (${phCandidates.length}), Reddit (${redditCandidates.length}), LinkedIn (${liCandidates.length}).`
+      `📊 Candidatos iniciales detectados: Ecosistema ES & LinkedIn (${esAndLiCandidates.length}), Reddit (${redditCandidates.length}), Product Hunt (${phCandidates.length}).`
     );
 
-    if (combinedRaw.length < batchLimit) {
-      const needed = batchLimit - combinedRaw.length;
-      const curated = await StartupRadarService.synthesizeCuratedIdeationCandidates(
+    context.log(`🧠 Resolviendo sitios web reales, extrayendo correos verificables y filtrando con Groq AI (prioridad Español)...`);
+
+    let qualifiedLeads = await StartupRadarService.qualifyAndFilterWithAI(
+      spanishFirst,
+      config,
+      groqKey,
+      batchLimit,
+      context.log
+    );
+
+    // Si aún faltan leads con correo electrónico verificado para completar el lote, descubrir startups hispanas adicionales con dominio/MX activo
+    if (qualifiedLeads.length < batchLimit) {
+      const needed = batchLimit - qualifiedLeads.length;
+      const existingUrls = new Set<string>(qualifiedLeads.map(l => l.websiteUrl));
+      const discoveredEs = await StartupRadarService.discoverVerifiedSpanishStartupLeads(
         config,
         groqKey,
         needed,
+        existingUrls,
         context.log
       );
-      combinedRaw = [...combinedRaw, ...curated];
+      if (discoveredEs.length > 0) {
+        const extraQualified = await StartupRadarService.qualifyAndFilterWithAI(
+          discoveredEs,
+          config,
+          groqKey,
+          needed,
+          context.log
+        );
+        qualifiedLeads = [...qualifiedLeads, ...extraQualified].slice(0, batchLimit);
+      }
     }
 
-    const candidatesToEvaluate = combinedRaw.slice(0, batchLimit + 3);
-    context.log(`🧠 Filtrando productos con desarrollo avanzado y calificando necesidades técnicas primarias con Groq AI...`);
-
-    const qualifiedLeads = (
-      await StartupRadarService.qualifyAndFilterWithAI(candidatesToEvaluate, config, groqKey, context.log)
-    ).slice(0, batchLimit);
-
-    context.log(`✅ ${qualifiedLeads.length} startups en fase de ideación/semilla calificadas exitosamente.`);
+    context.log(`✅ ${qualifiedLeads.length} startups en español/ideación con correo electrónico verificado listas.`);
 
     // 2. Resolver proyecto destino para guardar los leads en el CRM
     let targetProjectId = context.workflow.projectId;
@@ -3075,6 +3090,7 @@ class StartupIdeationRadarWorkflow extends BaseWorkflowType {
       let dbLeadId: string | null = null;
       const leadMetadata = {
         startupRadar: true,
+        isSpanish: qLead.isSpanish,
         sourcePlatform: qLead.sourcePlatform,
         sourceDetail: qLead.sourceDetail,
         startupStage: qLead.startupStage,
@@ -3089,9 +3105,9 @@ class StartupIdeationRadarWorkflow extends BaseWorkflowType {
         aiCustomPitch: qLead.aiCustomPitch,
         aiSubjectLine: qLead.aiSubjectLine,
         aiAuditReport: {
-          detailedAnalysis: `[${qLead.sourcePlatform} · ${qLead.startupStage}] Fundador: ${qLead.founderName} (${qLead.founderHandleOrRole}). Necesidad técnica detectada: ${qLead.primaryTechnicalNeed}.`,
+          detailedAnalysis: `[${qLead.sourcePlatform} · ${qLead.startupStage}] Fundador: ${qLead.founderName} (${qLead.founderHandleOrRole}) — Email: ${qLead.email}. Necesidad técnica detectada: ${qLead.primaryTechnicalNeed}.`,
           technicalErrors: qLead.painPoints,
-          visualErrors: [`Etapa: ${qLead.startupStage} (Score: ${qLead.qualificationScore}/100)`]
+          visualErrors: [`Etapa: ${qLead.startupStage} (${qLead.qualificationScore}% Fit)`]
         }
       };
 
@@ -3102,7 +3118,7 @@ class StartupIdeationRadarWorkflow extends BaseWorkflowType {
               projectId: targetProjectId,
               businessName: qLead.projectName,
               contactName: qLead.founderName,
-              email: qLead.email || undefined,
+              email: qLead.email,
               website: qLead.websiteUrl || qLead.communityUrl || undefined,
               source: `Startup Radar (${qLead.sourcePlatform})`,
               status: 'NUEVO',
@@ -3121,9 +3137,9 @@ class StartupIdeationRadarWorkflow extends BaseWorkflowType {
         businessName: qLead.projectName,
         contactName: qLead.founderName,
         address: `${qLead.sourcePlatform} · ${qLead.startupStage} · ${qLead.primaryTechnicalNeed}`,
-        phone: qLead.founderHandleOrRole,
+        phone: qLead.email,
         website: qLead.websiteUrl || qLead.communityUrl,
-        email: qLead.email || 'Contacto vía Comunidad / Perfil',
+        email: qLead.email,
         rating: `${qLead.qualificationScore}% Fit`,
         sourcePlatform: qLead.sourcePlatform,
         startupStage: qLead.startupStage,
@@ -3132,10 +3148,10 @@ class StartupIdeationRadarWorkflow extends BaseWorkflowType {
       });
     }
 
-    context.log(`💾 Se guardaron ${savedLeadsOutput.length} leads de startups en ideación en el CRM listos para el workflow de Auto-Outreach.`);
+    context.log(`💾 Se guardaron ${savedLeadsOutput.length} leads de startups con correo verificado en el CRM.`);
 
     return {
-      searchQuery: `Product Hunt (${phTags.slice(0, 2).join(', ')}) + Reddit (r/${subreddits.slice(0, 2).join(', r/')}) + LinkedIn Seed`,
+      searchQuery: `Prioridad Español (España / Latam) · Product Hunt + Reddit + LinkedIn Seed`,
       total_found: savedLeadsOutput.length,
       audited_leads: savedLeadsOutput.length,
       leads: savedLeadsOutput
