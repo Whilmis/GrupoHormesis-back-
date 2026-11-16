@@ -536,6 +536,58 @@ export const workflowController = {
         const ctaBooking = data?.ctaBookingText || '📅 Agendar Llamada o Cita (15 min)';
         const footerComp = data?.footerCompany || comp;
 
+        if (colors.isDark) {
+          const benefitsHtmlDark = benefits
+            .map(
+              (b) =>
+                `<div style='margin-bottom: 12px; padding-bottom: 12px; border-bottom: 1px solid rgba(255, 255, 255, 0.08);'>
+                  <div style='font-size: 14.5px; font-weight: 700; color: #ffffff; margin-bottom: 3px;'><span style='color: ${accent};'>${b.icon || '⚡'}</span> ${b.title || 'Beneficio Clave'}</div>
+                  <div style='font-size: 13.5px; color: #94a3b8; line-height: 1.55;'>${b.desc || ''}</div>
+                </div>`
+            )
+            .join('');
+
+          const stepsHtmlDark = steps
+            .map(
+              (s) =>
+                `<div style='margin-bottom: 10px; font-size: 13.5px; color: #cbd5e1; line-height: 1.5;'>
+                  <strong style='color: ${accent};'>${s.title || 'Paso'}:</strong> ${s.desc || ''}
+                </div>`
+            )
+            .join('');
+
+          return `<div style='max-width: 640px; margin: 0 auto; font-family: -apple-system, BlinkMacSystemFont, Segoe UI, Inter, Helvetica, Arial, sans-serif; background: #09090b; border-radius: 14px; overflow: hidden; border: 1px solid rgba(255, 255, 255, 0.12); box-shadow: 0 16px 40px rgba(0, 0, 0, 0.7); color: #f1f5f9;'>
+  <div style='background: #000000; border-top: 4px solid ${accent}; padding: 32px 28px; border-bottom: 1px solid rgba(255, 255, 255, 0.08);'>
+    <span style='display: inline-block; background: rgba(229, 9, 20, 0.15); color: ${accent}; font-size: 11px; font-weight: 700; letter-spacing: 1.5px; text-transform: uppercase; padding: 5px 12px; border-radius: 9999px; border: 1px solid rgba(229, 9, 20, 0.35);'>${badge}</span>
+    <h1 style='color: #ffffff; font-size: 22px; font-weight: 800; margin: 14px 0 6px 0; line-height: 1.3;'>${headline}</h1>
+    <p style='color: #94a3b8; font-size: 14px; margin: 0; line-height: 1.5;'>${subtitle}</p>
+  </div>
+  <div style='padding: 28px;'>
+    <p style='font-size: 15px; color: #e2e8f0; line-height: 1.7; margin: 0 0 14px 0;'>${p1}</p>
+    <p style='font-size: 15px; color: #cbd5e1; line-height: 1.7; margin: 0 0 22px 0;'>${p2}</p>
+    <div style='background: #121217; border-left: 4px solid ${accent}; border-radius: 8px; padding: 20px 22px; margin: 24px 0; border: 1px solid rgba(255, 255, 255, 0.06);'>
+      <h3 style='margin: 0 0 14px 0; color: #ffffff; font-size: 16px; font-weight: 700;'>${valueBoxTitle}</h3>
+      ${benefitsHtmlDark}
+    </div>
+    <div style='background: #121217; border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 10px; padding: 20px 22px; margin: 22px 0;'>
+      <h4 style='margin: 0 0 12px 0; color: ${accent}; font-size: 14px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px;'>📋 Hoja de Ruta</h4>
+      ${stepsHtmlDark}
+    </div>
+    <div style='background: #121217; border: 1px solid rgba(255, 255, 255, 0.06); border-radius: 8px; padding: 14px 18px; color: #cbd5e1; font-size: 13px; margin-bottom: 24px; line-height: 1.5;'>
+      🔒 <strong style='color: #ffffff;'>Compromiso ${comp}:</strong> ${guarantee}
+    </div>
+    <div style='text-align: center; padding: 24px 20px; background: #121217; border-radius: 12px; border: 1px solid rgba(255, 255, 255, 0.08);'>
+      <p style='margin: 0 0 16px 0; color: #ffffff; font-size: 15px; font-weight: 700;'>¿Deseas evaluar tu caso directamente con nosotros?</p>
+      <a href='${bookingUrl}' target='_blank' style='display: inline-block; background: ${accent}; color: #ffffff; padding: 14px 26px; border-radius: 8px; font-weight: 700; font-size: 14px; text-decoration: none; margin: 6px; box-shadow: 0 4px 18px rgba(229, 9, 20, 0.45);'>${ctaBooking}</a>
+      <a href='mailto:?subject=${encodeURIComponent('Consulta sobre ' + serviceName + ' - ' + comp)}' style='display: inline-block; background: #18181b; color: #ffffff; border: 1px solid rgba(255, 255, 255, 0.2); padding: 13px 22px; border-radius: 8px; font-weight: 600; font-size: 13px; text-decoration: none; margin: 6px;'>✉️ Responder por Correo</a>
+    </div>
+  </div>
+  <div style='background: #000000; padding: 18px 28px; text-align: center; border-top: 1px solid rgba(255, 255, 255, 0.08);'>
+    <p style='margin: 0; color: #94a3b8; font-size: 13px; font-weight: 700;'>${footerComp}</p>
+  </div>
+</div>`;
+        }
+
         return `<div style='max-width: 640px; margin: 0 auto; font-family: -apple-system, BlinkMacSystemFont, Segoe UI, Inter, Helvetica, Arial, sans-serif; background: #ffffff; border-radius: 14px; overflow: hidden; border: 1px solid #e2e8f0; box-shadow: 0 12px 32px rgba(15, 23, 42, 0.08); color: #1e293b;'>
   <div style='background: ${primary}; border-top: 4px solid ${accent}; padding: 32px 28px;'>
     <span style='display: inline-block; background: rgba(255, 255, 255, 0.15); color: #ffffff; font-size: 11px; font-weight: 700; letter-spacing: 1.2px; text-transform: uppercase; padding: 5px 12px; border-radius: 9999px; border: 1px solid rgba(255, 255, 255, 0.25);'>${badge}</span>
@@ -869,7 +921,47 @@ Devuelve ÚNICAMENTE un JSON válido con esta estructura exacta:
                   )
                   .join('');
 
-                const richHtml = `<div style='max-width: 640px; margin: 0 auto; font-family: -apple-system, BlinkMacSystemFont, Segoe UI, Inter, Helvetica, Arial, sans-serif; background: #ffffff; border-radius: 14px; overflow: hidden; border: 1px solid #e2e8f0; box-shadow: 0 12px 32px rgba(15, 23, 42, 0.08); color: #1e293b;'>
+                const richHtml = brandColors.isDark
+                  ? `<div style='max-width: 640px; margin: 0 auto; font-family: -apple-system, BlinkMacSystemFont, Segoe UI, Roboto, sans-serif; background: #09090b; border-radius: 14px; overflow: hidden; border: 1px solid rgba(255, 255, 255, 0.12); box-shadow: 0 16px 40px rgba(0, 0, 0, 0.7); color: #f1f5f9;'>
+  <div style='background: #000000; border-top: 4px solid ${accent}; padding: 32px 28px; border-bottom: 1px solid rgba(255, 255, 255, 0.08);'>
+    <span style='display: inline-block; background: rgba(229, 9, 20, 0.15); color: ${accent}; font-size: 11px; font-weight: 700; letter-spacing: 1.5px; text-transform: uppercase; padding: 5px 12px; border-radius: 9999px; border: 1px solid rgba(229, 9, 20, 0.35);'>${parsed.badge || `${comp.toUpperCase()} · PROPUESTA ESPECIALIZADA`}</span>
+    <h1 style='color: #ffffff; font-size: 22px; font-weight: 800; margin: 14px 0 6px 0; line-height: 1.3;'>${parsed.headline || `Propuesta: ${srvKey}`}</h1>
+    <p style='color: #94a3b8; font-size: 14px; margin: 0; line-height: 1.5;'>${parsed.subtitle || 'Preparado especialmente para [Nombre]'}</p>
+  </div>
+  <div style='padding: 28px;'>
+    <p style='font-size: 15px; color: #e2e8f0; line-height: 1.7; margin: 0 0 14px 0;'>${parsed.introParagraph1 || ''}</p>
+    <p style='font-size: 15px; color: #cbd5e1; line-height: 1.7; margin: 0 0 22px 0;'>${parsed.introParagraph2 || ''}</p>
+    <div style='background: #121217; border-left: 4px solid ${accent}; border-radius: 8px; padding: 20px 22px; margin: 24px 0; border: 1px solid rgba(255, 255, 255, 0.06);'>
+      <h3 style='margin: 0 0 14px 0; color: #ffffff; font-size: 16px; font-weight: 700;'>${parsed.valueBoxTitle || `⚡ Ventajas en ${srvKey}`}</h3>
+      ${(Array.isArray(parsed.benefits) ? parsed.benefits : []).map((b: any) =>
+        `<div style='margin-bottom: 12px; padding-bottom: 12px; border-bottom: 1px solid rgba(255, 255, 255, 0.08);'>
+          <div style='font-size: 14.5px; font-weight: 700; color: #ffffff; margin-bottom: 3px;'><span style='color: ${accent};'>${b.icon || '⚡'}</span> ${b.title || ''}</div>
+          <div style='font-size: 13.5px; color: #94a3b8; line-height: 1.55;'>${b.desc || ''}</div>
+        </div>`
+      ).join('')}
+    </div>
+    <div style='background: #121217; border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 10px; padding: 20px 22px; margin: 22px 0;'>
+      <h4 style='margin: 0 0 12px 0; color: ${accent}; font-size: 14px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px;'>📋 Hoja de Ruta</h4>
+      ${(Array.isArray(parsed.steps) ? parsed.steps : []).map((s: any) =>
+        `<div style='margin-bottom: 10px; font-size: 13.5px; color: #cbd5e1; line-height: 1.5;'>
+          <strong style='color: ${accent};'>${s.title || ''}:</strong> ${s.desc || ''}
+        </div>`
+      ).join('')}
+    </div>
+    <div style='background: #121217; border: 1px solid rgba(255, 255, 255, 0.06); border-radius: 8px; padding: 14px 18px; color: #cbd5e1; font-size: 13px; margin-bottom: 24px; line-height: 1.5;'>
+      🔒 <strong style='color: #ffffff;'>Compromiso ${comp}:</strong> ${parsed.guarantee || 'Calidad profesional y garantía de satisfacción.'}
+    </div>
+    <div style='text-align: center; padding: 24px 20px; background: #121217; border-radius: 12px; border: 1px solid rgba(255, 255, 255, 0.08);'>
+      <p style='margin: 0 0 16px 0; color: #ffffff; font-size: 15px; font-weight: 700;'>¿Evaluamos cómo aplicarlo a tu caso en una sesión de 15 minutos?</p>
+      <a href='[Link_Calendario]' target='_blank' style='display: inline-block; background: ${accent}; color: #ffffff; padding: 14px 26px; border-radius: 8px; font-weight: 700; font-size: 14px; text-decoration: none; margin: 6px; box-shadow: 0 4px 18px rgba(229, 9, 20, 0.45);'>${parsed.ctaBookingText || '📅 Agendar Llamada o Cita (15 min)'}</a>
+      <a href='mailto:?subject=${encodeURIComponent('Consulta sobre ' + srvKey + ' - ' + comp)}' style='display: inline-block; background: #18181b; color: #ffffff; border: 1px solid rgba(255, 255, 255, 0.2); padding: 13px 22px; border-radius: 8px; font-weight: 600; font-size: 13px; text-decoration: none; margin: 6px;'>✉️ Responder por Correo</a>
+    </div>
+  </div>
+  <div style='background: #000000; padding: 18px 28px; text-align: center; border-top: 1px solid rgba(255, 255, 255, 0.08);'>
+    <p style='margin: 0; color: #94a3b8; font-size: 13px; font-weight: 700;'>${parsed.footerCompany || comp}</p>
+  </div>
+</div>`
+                  : `<div style='max-width: 640px; margin: 0 auto; font-family: -apple-system, BlinkMacSystemFont, Segoe UI, Inter, Helvetica, Arial, sans-serif; background: #ffffff; border-radius: 14px; overflow: hidden; border: 1px solid #e2e8f0; box-shadow: 0 12px 32px rgba(15, 23, 42, 0.08); color: #1e293b;'>
   <div style='background: ${primary}; border-top: 4px solid ${accent}; padding: 32px 28px;'>
     <span style='display: inline-block; background: rgba(255, 255, 255, 0.15); color: #ffffff; font-size: 11px; font-weight: 700; letter-spacing: 1.2px; text-transform: uppercase; padding: 5px 12px; border-radius: 9999px; border: 1px solid rgba(255, 255, 255, 0.25);'>${parsed.badge || `${comp.toUpperCase()} · PROPUESTA ESPECIALIZADA`}</span>
     <h1 style='color: #ffffff; font-size: 22px; font-weight: 800; margin: 14px 0 6px 0; line-height: 1.3;'>${parsed.headline || `Propuesta: ${srvKey}`}</h1>
