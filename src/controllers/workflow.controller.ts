@@ -461,8 +461,13 @@ export const workflowController = {
         bookingUrl: string = '[Link_Calendario]'
       ): string => {
         const comp = data?.companyName || companyName;
-        const primary = isValidHex(data?.primaryColor) ? data.primaryColor.trim() : (isValidHex(colors.primary) ? colors.primary : '#1e293b');
-        const accent = isValidHex(data?.accentColor) ? data.accentColor.trim() : (isValidHex(colors.accent) ? colors.accent : '#2563eb');
+        const isDark = Boolean(colors.isDark || /dark|oscuro|obsidiana|cyber|negro/i.test(`${brandVoiceText} ${businessContextText}`));
+        const primary = isDark
+          ? '#09090b'
+          : (isValidHex(colors.primary) ? colors.primary : (isValidHex(data?.primaryColor) ? data.primaryColor.trim() : '#1e293b'));
+        const accent = isValidHex(colors.accent)
+          ? colors.accent
+          : (isValidHex(data?.accentColor) ? data.accentColor.trim() : (isDark ? '#e50914' : '#2563eb'));
         const badge = data?.badge || `${comp.toUpperCase()} · PROPUESTA ESTRATÉGICA`;
         const headline = data?.headline || `Propuesta: ${serviceName}`;
         const subtitle = data?.subtitle || 'Diagnóstico y propuesta personalizada para [Nombre]';
@@ -536,7 +541,7 @@ export const workflowController = {
         const ctaBooking = data?.ctaBookingText || '📅 Agendar Llamada o Cita (15 min)';
         const footerComp = data?.footerCompany || comp;
 
-        if (colors.isDark) {
+        if (isDark) {
           const benefitsHtmlDark = benefits
             .map(
               (b) =>
@@ -730,17 +735,35 @@ REGLAS OBLIGATORIAS:
                     }
                   ];
                 } else {
-                  const resolvedPrimary = isValidHex(parsed.primaryColor) ? parsed.primaryColor.trim() : colors.primary;
-                  const resolvedAccent = isValidHex(parsed.accentColor) ? parsed.accentColor.trim() : colors.accent;
-                  const fullHtml = parsed.body
-                    ? ensureExecutiveFormEmailHtml(parsed.body, service, '[Link_Calendario]', {
+                  const isDark = Boolean(colors.isDark || /dark|oscuro|obsidiana|cyber|negro/i.test(`${brandVoiceText} ${businessContextText}`));
+                  const resolvedPrimary = isDark
+                    ? '#09090b'
+                    : (isValidHex(colors.primary) ? colors.primary : (isValidHex(parsed.primaryColor) ? parsed.primaryColor.trim() : '#1e293b'));
+                  const resolvedAccent = isValidHex(colors.accent)
+                    ? colors.accent
+                    : (isValidHex(parsed.accentColor) ? parsed.accentColor.trim() : (isDark ? '#e50914' : '#2563eb'));
+
+                  const hasStructured = Boolean(
+                    parsed.introParagraph1 ||
+                    (Array.isArray(parsed.benefits) && parsed.benefits.length > 0) ||
+                    (Array.isArray(parsed.steps) && parsed.steps.length > 0) ||
+                    parsed.headline ||
+                    parsed.valueBoxTitle
+                  );
+
+                  const fullHtml = hasStructured
+                    ? buildExecutiveHtmlFromStructured(
+                        service,
+                        { ...parsed, primaryColor: resolvedPrimary, accentColor: resolvedAccent },
+                        '[Link_Calendario]'
+                      )
+                    : ensureExecutiveFormEmailHtml(parsed.body || '', service, '[Link_Calendario]', {
                         companyName,
                         businessContext: businessContextText,
                         brandVoice: brandVoiceText,
                         primaryColor: resolvedPrimary,
                         accentColor: resolvedAccent
-                      })
-                    : buildExecutiveHtmlFromStructured(service, { ...parsed, primaryColor: resolvedPrimary, accentColor: resolvedAccent }, '[Link_Calendario]');
+                      });
                   return [
                     service,
                     {
@@ -900,8 +923,13 @@ Devuelve ÚNICAMENTE un JSON válido con esta estructura exacta:
               if (match) {
                 const parsed = JSON.parse(match[0]);
                 const comp = parsed.companyName || compName;
-                const primary = isValidHex(parsed.primaryColor) ? parsed.primaryColor.trim() : brandColors.primary;
-                const accent = isValidHex(parsed.accentColor) ? parsed.accentColor.trim() : brandColors.accent;
+                const isDark = Boolean(brandColors.isDark || /dark|oscuro|obsidiana|cyber|negro/i.test(`${currentConfig.brandVoice || ''} ${refinement_prompt || ''}`));
+                const primary = isDark
+                  ? '#09090b'
+                  : (isValidHex(brandColors.primary) ? brandColors.primary : (isValidHex(parsed.primaryColor) ? parsed.primaryColor.trim() : '#1e293b'));
+                const accent = isValidHex(brandColors.accent)
+                  ? brandColors.accent
+                  : (isValidHex(parsed.accentColor) ? parsed.accentColor.trim() : (isDark ? '#e50914' : '#2563eb'));
 
                 const benefitsHtml = (Array.isArray(parsed.benefits) ? parsed.benefits : [])
                   .map(
@@ -921,7 +949,7 @@ Devuelve ÚNICAMENTE un JSON válido con esta estructura exacta:
                   )
                   .join('');
 
-                const richHtml = brandColors.isDark
+                const richHtml = isDark
                   ? `<div style='max-width: 640px; margin: 0 auto; font-family: -apple-system, BlinkMacSystemFont, Segoe UI, Roboto, sans-serif; background: #09090b; border-radius: 14px; overflow: hidden; border: 1px solid rgba(255, 255, 255, 0.12); box-shadow: 0 16px 40px rgba(0, 0, 0, 0.7); color: #f1f5f9;'>
   <div style='background: #000000; border-top: 4px solid ${accent}; padding: 32px 28px; border-bottom: 1px solid rgba(255, 255, 255, 0.08);'>
     <span style='display: inline-block; background: rgba(229, 9, 20, 0.15); color: ${accent}; font-size: 11px; font-weight: 700; letter-spacing: 1.5px; text-transform: uppercase; padding: 5px 12px; border-radius: 9999px; border: 1px solid rgba(229, 9, 20, 0.35);'>${parsed.badge || `${comp.toUpperCase()} · PROPUESTA ESPECIALIZADA`}</span>
@@ -1011,7 +1039,9 @@ Devuelve ÚNICAMENTE un JSON válido con esta estructura exacta:
             body: ensureExecutiveFormEmailHtml(currentTpl?.body || '', srvKey, '[Link_Calendario]', {
               companyName: compName,
               businessContext: businessContextInfo,
-              brandVoice: currentConfig.brandVoice
+              brandVoice: currentConfig.brandVoice,
+              primaryColor: brandColors.primary,
+              accentColor: brandColors.accent
             })
           }
         ];

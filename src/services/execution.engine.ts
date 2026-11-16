@@ -2606,21 +2606,27 @@ export function extractBusinessNameFromText(text?: string, fallback: string = 'N
 
 export function extractBrandColors(brandVoiceOrContext?: string): { primary: string; accent: string; isDark?: boolean } {
   const text = (brandVoiceOrContext || '').toLowerCase();
-  const hexMatches = text.match(/#[0-9a-fA-F]{6}|#[0-9a-fA-F]{3}/g);
+  const hexMatches = text.match(/#[0-9a-fA-F]{3,8}/g);
   const isDarkMode = /dark|oscuro|obsidiana|cyber|negro/i.test(text);
 
   if (hexMatches && hexMatches.length >= 2) {
-    return { primary: hexMatches[0], accent: hexMatches[1], isDark: isDarkMode };
+    let c1 = hexMatches[0];
+    let c2 = hexMatches[1];
+    const isDarkHex = (hex: string) => /#(0[0-9a-f]{5}|1[0-9a-f]{5}|2[0-9a-f]{5}|[0-2][0-9a-f]{2})/i.test(hex);
+    if (isDarkMode && isDarkHex(c2) && !isDarkHex(c1)) {
+      [c1, c2] = [c2, c1];
+    }
+    return { primary: c1, accent: c2, isDark: isDarkMode };
   }
 
   if (hexMatches && hexMatches.length === 1) {
     const single = hexMatches[0];
     const isExplicitAccent =
-      /acento[s]?\s*(en|de|:)?\s*.*#[0-9a-fA-F]{3,6}/i.test(text) ||
-      (/negro|obsidiana|dark|oscuro/i.test(text) && !/negro\s*\(?#[0-9a-fA-F]{3,6}/i.test(text));
+      /acento[s]?\s*(en|de|:)?\s*.*#[0-9a-fA-F]{3,8}/i.test(text) ||
+      (/negro|obsidiana|dark|oscuro|cyber/i.test(text) && !/negro\s*\(?#[0-9a-fA-F]{3,8}/i.test(text));
 
     if (isExplicitAccent) {
-      const primary = /obsidiana/i.test(text) ? '#09090b' : '#121214';
+      const primary = /obsidiana/i.test(text) ? '#09090b' : (isDarkMode ? '#09090b' : '#121214');
       return { primary, accent: single, isDark: true };
     }
 
@@ -2634,7 +2640,7 @@ export function extractBrandColors(brandVoiceOrContext?: string): { primary: str
   }
 
   // Mapeo inteligente de colores por nombres o combinaciones en español / inglés
-  if (/obsidiana.*rojo|rojo.*obsidiana|negro.*rojo|rojo.*negro/i.test(text)) {
+  if (/obsidiana.*rojo|rojo.*obsidiana|negro.*rojo|rojo.*negro|cyber.*rojo|rojo.*cyber/i.test(text)) {
     return { primary: '#09090b', accent: '#e50914', isDark: true };
   }
   if (/negro.*dorad|dorad.*negr|obsidiana.*dorad/i.test(text)) {
@@ -2649,7 +2655,7 @@ export function extractBrandColors(brandVoiceOrContext?: string): { primary: str
     { test: /azul/i, primary: '#1e3a8a', accent: '#2563eb' },
     { test: /burdeos.*dorad|dorad.*burdeos|granate.*dorad/i, primary: '#800020', accent: '#d4af37' },
     { test: /burdeos|granate|vino/i, primary: '#800020', accent: '#eab308' },
-    { test: /rojo.*negr|negr.*rojo/i, primary: '#18181b', accent: '#dc2626', isDark: true },
+    { test: /rojo.*negr|negr.*rojo|cyber.*rojo|rojo.*cyber/i, primary: '#18181b', accent: '#e50914', isDark: true },
     { test: /rojo.*dorad|dorad.*rojo/i, primary: '#991b1b', accent: '#d97706' },
     { test: /rojo/i, primary: '#991b1b', accent: '#ef4444' },
     { test: /dorad.*negr|negr.*dorad|oro.*negr/i, primary: '#18181b', accent: '#d97706', isDark: true },
@@ -2694,31 +2700,70 @@ export function ensureExecutiveFormEmailHtml(
   }
 ): string {
   const cleanBody = (rawBody || '').trim();
+  const company =
+    brandInfo?.companyName ||
+    extractBusinessNameFromText(brandInfo?.businessContext, 'Nuestra Empresa');
+  const colors = extractBrandColors(`${brandInfo?.brandVoice || ''} ${brandInfo?.businessContext || ''}`);
+  const isDark = Boolean(colors.isDark || /dark|obsidiana|cyber|negro/i.test(`${brandInfo?.brandVoice || ''} ${brandInfo?.businessContext || ''}`));
+  const primary = isDark ? '#09090b' : (brandInfo?.primaryColor || colors.primary);
+  const accent = brandInfo?.accentColor || colors.accent || (isDark ? '#e50914' : '#2563eb');
 
-  // Si el cuerpo ya tiene una estructura HTML rica completa (con contenedor o tablas/secciones), se respeta al 100%
+  // Si el cuerpo ya tiene una estructura HTML rica completa (con contenedor o tablas/secciones)
   const hasRichHtmlStructure =
     cleanBody.includes('<div') &&
     (cleanBody.includes('<p') || cleanBody.includes('<ul') || cleanBody.includes('<table') || cleanBody.includes('<section')) &&
     cleanBody.length > 250;
 
   if (hasRichHtmlStructure) {
-    return cleanBody;
+    // Si se solicitó Dark Mode pero el HTML previo es modo claro (sin fondo obsidiana o negro), re-envolverlo
+    const isAlreadyDarkHtml = cleanBody.includes('#09090b') || cleanBody.includes('#000000') || cleanBody.includes('#121217') || cleanBody.includes('#18181b');
+    if (!isDark || isAlreadyDarkHtml) {
+      return cleanBody;
+    }
   }
-
-  const company =
-    brandInfo?.companyName ||
-    extractBusinessNameFromText(brandInfo?.businessContext, 'Nuestra Empresa');
-  const colors = extractBrandColors(`${brandInfo?.brandVoice || ''} ${brandInfo?.businessContext || ''}`);
-  const primary = brandInfo?.primaryColor || colors.primary;
-  const accent = brandInfo?.accentColor || colors.accent;
-
-  const consultativeIntroHtml = cleanBody ||
-    `<p style='font-size: 15px; color: #334155; line-height: 1.7; margin: 0 0 14px 0;'>Hola <strong style='color: ${primary};'>[Nombre]</strong>, hemos recibido tu solicitud de información sobre <strong style='color: ${primary};'>${serviceName}</strong> en <strong style='color: ${primary};'>${company}</strong>.</p>
-    <p style='font-size: 15px; color: #334155; line-height: 1.7; margin: 0 0 18px 0;'>Nos pondremos en contacto contigo para ofrecerte una propuesta totalmente personalizada y adaptada a las necesidades y objetivos de tu proyecto.</p>`;
 
   const finalMailto =
     brandInfo?.replyMailto ||
     `mailto:?subject=${encodeURIComponent('Consulta sobre ' + serviceName + ' - ' + company)}`;
+
+  if (isDark) {
+    const consultativeIntroHtmlDark = cleanBody ||
+      `<p style='font-size: 15px; color: #e2e8f0; line-height: 1.7; margin: 0 0 14px 0;'>Hola <strong style='color: #ffffff;'>[Nombre]</strong>, hemos recibido tu solicitud de información sobre <strong style='color: ${accent};'>${serviceName}</strong> en <strong style='color: #ffffff;'>${company}</strong>.</p>
+      <p style='font-size: 15px; color: #cbd5e1; line-height: 1.7; margin: 0 0 18px 0;'>Nos pondremos en contacto contigo para ofrecerte una propuesta totalmente personalizada y adaptada a las necesidades y objetivos de tu proyecto.</p>`;
+
+    return `<div style='max-width: 640px; margin: 0 auto; font-family: -apple-system, BlinkMacSystemFont, Segoe UI, Inter, Helvetica, Arial, sans-serif; background: #09090b; border-radius: 14px; overflow: hidden; border: 1px solid rgba(255, 255, 255, 0.12); box-shadow: 0 16px 40px rgba(0, 0, 0, 0.7); color: #f1f5f9;'>
+  <div style='background: #000000; border-top: 4px solid ${accent}; padding: 32px 28px; border-bottom: 1px solid rgba(255, 255, 255, 0.08);'>
+    <span style='display: inline-block; background: rgba(229, 9, 20, 0.15); color: ${accent}; font-size: 11px; font-weight: 700; letter-spacing: 1.5px; text-transform: uppercase; padding: 5px 12px; border-radius: 9999px; border: 1px solid rgba(229, 9, 20, 0.35);'>${company.toUpperCase()} · PROPUESTA ESTRATÉGICA</span>
+    <h1 style='color: #ffffff; font-size: 22px; font-weight: 800; margin: 14px 0 6px 0; line-height: 1.3;'>Propuesta: ${serviceName}</h1>
+    <p style='color: #94a3b8; font-size: 14px; margin: 0; line-height: 1.5;'>Preparado especialmente para <strong style='color: #ffffff;'>[Nombre]</strong></p>
+  </div>
+  <div style='padding: 28px;'>
+    <div style='font-size: 15px; color: #cbd5e1; line-height: 1.7;'>
+      ${consultativeIntroHtmlDark}
+    </div>
+    <div style='background: #121217; border-left: 4px solid ${accent}; border-radius: 8px; padding: 18px 20px; margin: 24px 0; border: 1px solid rgba(255, 255, 255, 0.06);'>
+      <h3 style='margin: 0 0 10px 0; color: #ffffff; font-size: 15px; font-weight: 700;'>⚡ ¿Por qué elegir ${company}?</h3>
+      <ul style='margin: 0; padding-left: 18px; color: #94a3b8; font-size: 14px; line-height: 1.65;'>
+        <li style='margin-bottom: 6px;'><strong style='color: ${accent};'>Solución 100% Personalizada:</strong> Diseñada a medida para tus objetivos particulares.</li>
+        <li style='margin-bottom: 6px;'><strong style='color: ${accent};'>Atención Rápida y Directa:</strong> Sin intermediarios, con asesoramiento profesional continuo.</li>
+        <li><strong style='color: ${accent};'>Garantía y Confianza:</strong> Compromiso pleno con la calidad de nuestros servicios y tu satisfacción.</li>
+      </ul>
+    </div>
+    <div style='text-align: center; padding: 24px 20px; background: #121217; border-radius: 12px; border: 1px solid rgba(255, 255, 255, 0.08);'>
+      <p style='margin: 0 0 16px 0; color: #ffffff; font-size: 15px; font-weight: 700;'>¿Deseas revisar los detalles directamente con nosotros?</p>
+      <a href='${bookingUrl}' target='_blank' style='display: inline-block; background: ${accent}; color: #ffffff; padding: 14px 26px; border-radius: 8px; font-weight: 700; font-size: 14px; text-decoration: none; margin: 6px; box-shadow: 0 4px 18px rgba(229, 9, 20, 0.45);'>📅 Agendar Llamada o Cita</a>
+      <a href='${finalMailto}' style='display: inline-block; background: #18181b; color: #ffffff; border: 1px solid rgba(255, 255, 255, 0.2); padding: 13px 22px; border-radius: 8px; font-weight: 600; font-size: 13px; text-decoration: none; margin: 6px;'>✉️ Responder por Correo</a>
+    </div>
+  </div>
+  <div style='background: #000000; padding: 18px 28px; text-align: center; border-top: 1px solid rgba(255, 255, 255, 0.08);'>
+    <p style='margin: 0; color: #94a3b8; font-size: 13px; font-weight: 700;'>${company}</p>
+  </div>
+</div>`;
+  }
+
+  const consultativeIntroHtml = cleanBody ||
+    `<p style='font-size: 15px; color: #334155; line-height: 1.7; margin: 0 0 14px 0;'>Hola <strong style='color: ${primary};'>[Nombre]</strong>, hemos recibido tu solicitud de información sobre <strong style='color: ${primary};'>${serviceName}</strong> en <strong style='color: ${primary};'>${company}</strong>.</p>
+    <p style='font-size: 15px; color: #334155; line-height: 1.7; margin: 0 0 18px 0;'>Nos pondremos en contacto contigo para ofrecerte una propuesta totalmente personalizada y adaptada a las necesidades y objetivos de tu proyecto.</p>`;
 
   return `<div style='max-width: 640px; margin: 0 auto; font-family: -apple-system, BlinkMacSystemFont, Segoe UI, Inter, Helvetica, Arial, sans-serif; background: #ffffff; border-radius: 14px; overflow: hidden; border: 1px solid #e2e8f0; box-shadow: 0 12px 32px rgba(15, 23, 42, 0.08); color: #1e293b;'>
   <div style='background: ${primary}; border-top: 4px solid ${accent}; padding: 32px 28px;'>
