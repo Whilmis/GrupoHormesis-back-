@@ -3020,26 +3020,25 @@ class StartupIdeationRadarWorkflow extends BaseWorkflowType {
     const maxUpvotes = Number(config.maxUpvotesThreshold || 120);
     const batchLimit = Math.min(Math.max(Number(config.batchLimit || 6), 1), 15);
 
-    // 1. Recolectar candidatos dando prioridad a proyectos en Español (España / Latam) + Reddit + Product Hunt + LinkedIn
+    // 1. Recolectar candidatos en fase de ideación / semilla dando prioridad a proyectos en Español
     const [esAndLiCandidates, redditCandidates, phCandidates] = await Promise.all([
-      StartupRadarService.fetchSpanishStartupsAndLinkedInFounders(
+      StartupRadarService.fetchSpanishIdeationAndLinkedInFounders(
         liKeywords,
         config.targetGeoOrLanguage || 'España OR Latam',
         context.log
       ),
-      StartupRadarService.fetchRedditStartupCandidates(subreddits, valKeywords, context.log),
-      StartupRadarService.fetchProductHuntCandidates(phTags, maxUpvotes, productHuntToken, context.log)
+      StartupRadarService.fetchRedditIdeationFounders(subreddits, valKeywords, context.log),
+      StartupRadarService.fetchProductHuntIdeationMakers(phTags, maxUpvotes, productHuntToken, context.log)
     ]);
 
-    // Priorizar proyectos en español primero, luego intercalar el resto
     const allFetched = [...esAndLiCandidates, ...redditCandidates, ...phCandidates];
     const spanishFirst = allFetched.sort((a, b) => Number(b.isSpanish) - Number(a.isSpanish));
 
     context.log(
-      `📊 Candidatos iniciales detectados: Ecosistema ES & LinkedIn (${esAndLiCandidates.length}), Reddit (${redditCandidates.length}), Product Hunt (${phCandidates.length}).`
+      `📊 Señales de ideación detectadas: Ecosistema ES & LinkedIn (${esAndLiCandidates.length}), Reddit (${redditCandidates.length}), Product Hunt (${phCandidates.length}).`
     );
 
-    context.log(`🧠 Resolviendo sitios web reales, extrayendo correos verificables y filtrando con Groq AI (prioridad Español)...`);
+    context.log(`🧠 Filtrando empresas maduras, extrayendo correos de fundadores y armando Ficha de Ideación con Groq AI...`);
 
     let qualifiedLeads = await StartupRadarService.qualifyAndFilterWithAI(
       spanishFirst,
@@ -3049,11 +3048,11 @@ class StartupIdeationRadarWorkflow extends BaseWorkflowType {
       context.log
     );
 
-    // Si aún faltan leads con correo electrónico verificado para completar el lote, descubrir startups hispanas adicionales con dominio/MX activo
+    // Si faltan proyectos tempranos para completar el lote, buscar micro-startups y betas adicionales en español
     if (qualifiedLeads.length < batchLimit) {
       const needed = batchLimit - qualifiedLeads.length;
-      const existingUrls = new Set<string>(qualifiedLeads.map(l => l.websiteUrl));
-      const discoveredEs = await StartupRadarService.discoverVerifiedSpanishStartupLeads(
+      const existingUrls = new Set<string>(qualifiedLeads.map(l => l.websiteUrl || l.communityUrl));
+      const discoveredEs = await StartupRadarService.huntEmergingSpanishIndieProjects(
         config,
         groqKey,
         needed,
@@ -3072,7 +3071,7 @@ class StartupIdeationRadarWorkflow extends BaseWorkflowType {
       }
     }
 
-    context.log(`✅ ${qualifiedLeads.length} startups en español/ideación con correo electrónico verificado listas.`);
+    context.log(`✅ ${qualifiedLeads.length} proyectos en fase de ideación/semilla con correo verificado listos.`);
 
     // 2. Resolver proyecto destino para guardar los leads en el CRM
     let targetProjectId = context.workflow.projectId;
@@ -3095,19 +3094,22 @@ class StartupIdeationRadarWorkflow extends BaseWorkflowType {
         sourceDetail: qLead.sourceDetail,
         startupStage: qLead.startupStage,
         primaryTechnicalNeed: qLead.primaryTechnicalNeed,
+        recommendedStack: qLead.recommendedStack,
+        signalSnippet: qLead.signalSnippet || qLead.description,
         painPoints: qLead.painPoints,
         qualificationScore: qLead.qualificationScore,
         founderName: qLead.founderName,
         founderHandleOrRole: qLead.founderHandleOrRole,
         communityUrl: qLead.communityUrl,
+        websiteUrl: qLead.websiteUrl,
         upvotesOrScore: qLead.upvotesOrScore,
         tags: qLead.tags,
         aiCustomPitch: qLead.aiCustomPitch,
         aiSubjectLine: qLead.aiSubjectLine,
         aiAuditReport: {
-          detailedAnalysis: `[${qLead.sourcePlatform} · ${qLead.startupStage}] Fundador: ${qLead.founderName} (${qLead.founderHandleOrRole}) — Email: ${qLead.email}. Necesidad técnica detectada: ${qLead.primaryTechnicalNeed}.`,
+          detailedAnalysis: qLead.signalSnippet || qLead.description,
           technicalErrors: qLead.painPoints,
-          visualErrors: [`Etapa: ${qLead.startupStage} (${qLead.qualificationScore}% Fit)`]
+          visualErrors: []
         }
       };
 
@@ -3133,17 +3135,21 @@ class StartupIdeationRadarWorkflow extends BaseWorkflowType {
 
       savedLeadsOutput.push({
         id: dbLeadId,
-        name: `${qLead.projectName} (${qLead.founderName})`,
+        name: qLead.projectName,
         businessName: qLead.projectName,
         contactName: qLead.founderName,
-        address: `${qLead.sourcePlatform} · ${qLead.startupStage} · ${qLead.primaryTechnicalNeed}`,
+        founderHandleOrRole: qLead.founderHandleOrRole,
+        address: `${qLead.sourcePlatform} · ${qLead.sourceDetail}`,
         phone: qLead.email,
         website: qLead.websiteUrl || qLead.communityUrl,
+        communityUrl: qLead.communityUrl,
         email: qLead.email,
         rating: `${qLead.qualificationScore}% Fit`,
         sourcePlatform: qLead.sourcePlatform,
         startupStage: qLead.startupStage,
         primaryTechnicalNeed: qLead.primaryTechnicalNeed,
+        recommendedStack: qLead.recommendedStack,
+        signalSnippet: qLead.signalSnippet || qLead.description,
         metadata: leadMetadata
       });
     }
