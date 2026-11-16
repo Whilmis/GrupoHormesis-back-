@@ -8,7 +8,47 @@ export const workflowController = {
   // --- TEMPLATES ---
   async getTemplates(req: Request, res: Response) {
     try {
-      const templates = await prisma.workflowTemplate.findMany();
+      // Asegurar que la plantilla de Radar de Startups en Ideación exista siempre en la BD
+      await prisma.workflowTemplate
+        .upsert({
+          where: { typeIdentifier: 'startup_ideation_radar' },
+          update: {
+            name: '🚀 Radar de Startups & Fundadores (Ideación / Seed)',
+            description:
+              'Pipeline multi-fuente (Product Hunt + Reddit + LinkedIn) que filtra productos maduros y extrae/contacta fundadores en fase de ideación que buscan socio técnico o necesitan desarrollar su MVP.',
+            requiredCreds: ['groq_api_key', 'gmail_address', 'gmail_app_password'],
+            configSchema: {
+              properties: {
+                calendarId: {
+                  type: 'string',
+                  format: 'calendar',
+                  title: 'Calendario para llamadas con fundadores'
+                }
+              }
+            }
+          },
+          create: {
+            typeIdentifier: 'startup_ideation_radar',
+            name: '🚀 Radar de Startups & Fundadores (Ideación / Seed)',
+            description:
+              'Pipeline multi-fuente (Product Hunt + Reddit + LinkedIn) que filtra productos maduros y extrae/contacta fundadores en fase de ideación que buscan socio técnico o necesitan desarrollar su MVP.',
+            requiredCreds: ['groq_api_key', 'gmail_address', 'gmail_app_password'],
+            configSchema: {
+              properties: {
+                calendarId: {
+                  type: 'string',
+                  format: 'calendar',
+                  title: 'Calendario para llamadas con fundadores'
+                }
+              }
+            }
+          }
+        })
+        .catch(e => console.warn('[getTemplates] Aviso sincronizando startup_ideation_radar:', e.message));
+
+      const templates = await prisma.workflowTemplate.findMany({
+        orderBy: { createdAt: 'asc' }
+      });
       res.json(templates);
     } catch (error) {
       res.status(500).json({ error: 'Error obteniendo plantillas' });
@@ -186,8 +226,8 @@ export const workflowController = {
         });
       }
 
-      // 2. Si es un workflow pesado (Google Maps, Crawler Puppeteer o Outreach), responder de inmediato en segundo plano
-      const isHeavy = ['lead_collector', 'auto_outreach_google_maps', 'google_stitch_designer'].includes(
+      // 2. Si es un workflow pesado (Google Maps, Crawler Puppeteer, Outreach o Startup Radar), responder de inmediato en segundo plano
+      const isHeavy = ['lead_collector', 'auto_outreach_google_maps', 'google_stitch_designer', 'startup_ideation_radar'].includes(
         workflow.template?.typeIdentifier
       );
 

@@ -22,6 +22,7 @@ import {
   mergeCulinaryContent,
   renderCulinaryHospitalityHtml
 } from './culinary-template.service';
+import { StartupRadarService, StartupRadarConfig, RawStartupCandidate } from './startup-radar.service';
 
 export function getFrontendUrl(): string {
   const envUrl = process.env.FRONTEND_URL?.trim();
@@ -2978,6 +2979,281 @@ class FormContactWorkflow extends BaseWorkflowType {
 }
 
 // ----------------------------------------------------
+// RADAR DE STARTUPS EN IDEACIÓN / SEED (Product Hunt + Reddit + LinkedIn + Outreach)
+// ----------------------------------------------------
+class StartupIdeationRadarWorkflow extends BaseWorkflowType {
+  typeIdentifier = 'startup_ideation_radar';
+
+  async execute(context: WorkflowContext): Promise<any> {
+    context.log('🚀 Iniciando Pipeline Radar de Startups en Fase de Ideación (Product Hunt + Reddit + LinkedIn)...');
+
+    const groqKey = context.credentials['groq_api_key'] || process.env.GROQ_API_KEY || '';
+    const productHuntToken = context.credentials['producthunt_token'] || process.env.PRODUCTHUNT_TOKEN || '';
+    const gmailAddress = context.credentials['gmail_address'] || '';
+    const gmailAppPassword = (context.credentials['gmail_app_password'] || '').replace(/\s+/g, '');
+
+    if (!groqKey) {
+      throw new Error('Falta la credencial de Groq AI (groq_api_key) para analizar y filtrar startups en fase de ideación.');
+    }
+
+    const config = (context.workflow.config || {}) as StartupRadarConfig;
+    const phTags = (config.productHuntTags || 'pre-launch, ideation, mvp, saas, artificial-intelligence, developer-tools')
+      .split(',')
+      .map(s => s.trim())
+      .filter(Boolean);
+    const subreddits = (config.redditSubreddits || 'cofounder, startups, SaaS, SideProject, Entrepreneur, indiehackers')
+      .split(',')
+      .map(s => s.trim().replace(/^r\//i, ''))
+      .filter(Boolean);
+    const valKeywords = (
+      config.validationKeywords ||
+      'looking for technical cofounder, need developer, validating idea, building MVP, non-technical founder, seeking CTO'
+    )
+      .split(',')
+      .map(s => s.trim())
+      .filter(Boolean);
+    const liKeywords = (
+      config.linkedinKeywords || 'Stealth Startup, Pre-Seed Founder, Looking for Technical Co-Founder, Building MVP'
+    )
+      .split(',')
+      .map(s => s.trim())
+      .filter(Boolean);
+
+    const maxUpvotes = Number(config.maxUpvotesThreshold || 120);
+    const batchLimit = Math.min(Math.max(Number(config.batchLimit || 6), 1), 15);
+    const autoSendEmails = config.autoSendEmails !== false; // Por defecto activo si hay credenciales de Gmail
+
+    // 1. Recolectar candidatos desde las 3 fuentes (Product Hunt + Reddit + LinkedIn)
+    const [phCandidates, redditCandidates, liCandidates] = await Promise.all([
+      StartupRadarService.fetchProductHuntCandidates(phTags, maxUpvotes, productHuntToken, context.log),
+      StartupRadarService.fetchRedditStartupCandidates(subreddits, valKeywords, context.log),
+      StartupRadarService.fetchLinkedInSeedFounders(liKeywords, config.targetGeoOrLanguage || 'Spain OR Europe OR Remote', context.log)
+    ]);
+
+    let combinedRaw: RawStartupCandidate[] = [];
+    // Intercalar candidatos de las 3 fuentes para diversidad en el lote
+    const maxLen = Math.max(phCandidates.length, redditCandidates.length, liCandidates.length);
+    for (let i = 0; i < maxLen; i++) {
+      if (phCandidates[i]) combinedRaw.push(phCandidates[i]);
+      if (redditCandidates[i]) combinedRaw.push(redditCandidates[i]);
+      if (liCandidates[i]) combinedRaw.push(liCandidates[i]);
+    }
+
+    context.log(
+      `📊 Fuentes consultadas: Product Hunt (${phCandidates.length}), Reddit (${redditCandidates.length}), LinkedIn (${liCandidates.length}).`
+    );
+
+    if (combinedRaw.length < batchLimit) {
+      const needed = batchLimit - combinedRaw.length;
+      const curated = await StartupRadarService.synthesizeCuratedIdeationCandidates(
+        config,
+        groqKey,
+        needed,
+        context.log
+      );
+      combinedRaw = [...combinedRaw, ...curated];
+    }
+
+    const candidatesToEvaluate = combinedRaw.slice(0, batchLimit + 3);
+    context.log(`🧠 Filtrando productos con desarrollo avanzado y calificando necesidades técnicas primarias con Groq AI...`);
+
+    const qualifiedLeads = (
+      await StartupRadarService.qualifyAndFilterWithAI(candidatesToEvaluate, config, groqKey, context.log)
+    ).slice(0, batchLimit);
+
+    context.log(`✅ ${qualifiedLeads.length} startups en fase de ideación/semilla calificadas exitosamente.`);
+
+    // 2. Resolver proyecto destino para guardar los leads en el CRM
+    let targetProjectId = context.workflow.projectId;
+    if (!targetProjectId) {
+      const firstProj = await prisma.project.findFirst({
+        where: { userId: context.workflow.userId },
+        select: { id: true }
+      });
+      targetProjectId = firstProj?.id || null;
+    }
+
+    // 3. Resolver URL del calendario para llamadas de descubrimiento con fundadores
+    const frontendUrl = getFrontendUrl();
+    let calendarId = config.calendarId;
+    if (!calendarId) {
+      const userCal =
+        (await prisma.calendar.findFirst({ where: { userId: context.workflow.userId }, select: { id: true } })) ||
+        (await prisma.calendar.findFirst({ select: { id: true } }));
+      calendarId = userCal?.id;
+    }
+
+    const companyName =
+      config.businessName ||
+      extractBusinessNameFromText(config.businessContext, context.workflow.name || 'Grupo Hormesis');
+
+    // Configurar transporte SMTP si están disponibles las credenciales de Gmail y autoSendEmails está activo
+    let transporter: any = null;
+    if (autoSendEmails && gmailAddress && gmailAppPassword) {
+      transporter = nodemailer.createTransport({
+        host: 'smtp.gmail.com',
+        port: 465,
+        secure: true,
+        auth: {
+          user: gmailAddress,
+          pass: gmailAppPassword
+        },
+        family: 4,
+        connectionTimeout: 10000,
+        greetingTimeout: 10000,
+        socketTimeout: 15000
+      });
+    }
+
+    let emailsSent = 0;
+    const savedLeadsOutput: any[] = [];
+
+    for (const qLead of qualifiedLeads) {
+      let dbLeadId: string | null = null;
+      const leadMetadata = {
+        startupRadar: true,
+        sourcePlatform: qLead.sourcePlatform,
+        sourceDetail: qLead.sourceDetail,
+        startupStage: qLead.startupStage,
+        primaryTechnicalNeed: qLead.primaryTechnicalNeed,
+        painPoints: qLead.painPoints,
+        qualificationScore: qLead.qualificationScore,
+        founderName: qLead.founderName,
+        founderHandleOrRole: qLead.founderHandleOrRole,
+        communityUrl: qLead.communityUrl,
+        upvotesOrScore: qLead.upvotesOrScore,
+        tags: qLead.tags,
+        aiCustomPitch: qLead.aiCustomPitch,
+        aiSubjectLine: qLead.aiSubjectLine,
+        aiAuditReport: {
+          detailedAnalysis: `[${qLead.sourcePlatform} · ${qLead.startupStage}] Fundador: ${qLead.founderName} (${qLead.founderHandleOrRole}). Necesidad técnica detectada: ${qLead.primaryTechnicalNeed}.`,
+          technicalErrors: qLead.painPoints,
+          visualErrors: [`Etapa: ${qLead.startupStage} (Score: ${qLead.qualificationScore}/100)`]
+        }
+      };
+
+      if (targetProjectId) {
+        try {
+          const created = await prisma.lead.create({
+            data: {
+              projectId: targetProjectId,
+              businessName: qLead.projectName,
+              contactName: qLead.founderName,
+              email: qLead.email || undefined,
+              website: qLead.websiteUrl || qLead.communityUrl || undefined,
+              source: `Startup Radar (${qLead.sourcePlatform})`,
+              status: 'NUEVO',
+              metadata: leadMetadata as any
+            }
+          });
+          dbLeadId = created.id;
+        } catch (err: any) {
+          context.log(`Aviso guardando startup lead ${qLead.projectName}: ${err.message}`);
+        }
+      }
+
+      // 4. Envío automático de correo personalizado al fundador si dispone de email válido
+      const bookingUrl = calendarId
+        ? `${frontendUrl}/book/${calendarId}${dbLeadId ? `?ref=${dbLeadId}` : ''}`
+        : `${frontendUrl}/contacto`;
+
+      let emailSentToLead = false;
+      if (transporter && qLead.email) {
+        const emailValidation = await EmailValidatorService.validateEmail(qLead.email);
+        if (emailValidation.isValid) {
+          try {
+            const customTemplate = config.generated_outreach_email;
+            const rawSubject = customTemplate?.subject || qLead.aiSubjectLine || `Sobre ${qLead.projectName} — Socio Técnico & MVP`;
+            const finalSubject = rawSubject
+              .replace(/\[Nombre\]|\{\{name\}\}/gi, qLead.founderName)
+              .replace(/\[Empresa\]|\{\{businessName\}\}/gi, qLead.projectName)
+              .replace(/\[Plataforma\]/gi, qLead.sourcePlatform);
+
+            const introBodyHtml = customTemplate?.body
+              ? customTemplate.body
+                  .replace(/\[Nombre\]|\{\{name\}\}/gi, qLead.founderName)
+                  .replace(/\[Empresa\]|\{\{businessName\}\}/gi, qLead.projectName)
+                  .replace(/\[Necesidad_Tecnica\]/gi, qLead.primaryTechnicalNeed)
+                  .replace(/\[Plataforma\]/gi, qLead.sourcePlatform)
+              : `<p style='margin: 0 0 14px 0;'>${qLead.aiCustomPitch}</p>
+                 <p style='margin: 0 0 14px 0;'>Detectamos que en esta etapa de <strong>${qLead.startupStage}</strong> el foco crítico para <strong>${qLead.projectName}</strong> es: <strong>${qLead.primaryTechnicalNeed}</strong>.</p>`;
+
+            const finalHtml = ensureExecutiveFormEmailHtml(
+              introBodyHtml,
+              qLead.primaryTechnicalNeed,
+              bookingUrl,
+              {
+                companyName,
+                businessContext: config.businessContext,
+                brandVoice: config.brandVoice,
+                replyMailto: `mailto:${gmailAddress}?subject=${encodeURIComponent('Re: ' + finalSubject)}`
+              }
+            )
+              .replace(/\[Nombre\]|\{\{name\}\}/gi, qLead.founderName)
+              .replace(/\[Empresa\]|\{\{businessName\}\}/gi, qLead.projectName)
+              .replace(/\[Link_Calendario\]|\{\{bookingUrl\}\}/gi, bookingUrl);
+
+            await transporter.sendMail({
+              from: `"${companyName}" <${gmailAddress}>`,
+              to: qLead.email,
+              subject: finalSubject,
+              text: finalHtml.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim(),
+              html: finalHtml
+            });
+
+            emailsSent++;
+            emailSentToLead = true;
+            context.log(`✉️ Correo personalizado enviado a ${qLead.founderName} (${qLead.email}) [${qLead.projectName}]`);
+
+            if (dbLeadId) {
+              await prisma.lead.update({
+                where: { id: dbLeadId },
+                data: { status: 'CONTACTADO' }
+              });
+              await prisma.activity.create({
+                data: {
+                  leadId: dbLeadId,
+                  type: 'AUTO_EMAIL',
+                  title: `Outreach Fundador (${qLead.sourcePlatform}) Enviado`,
+                  description: `<strong>Asunto: ${finalSubject}</strong><br><br>${finalHtml}`
+                }
+              });
+            }
+          } catch (mailErr: any) {
+            context.log(`Aviso enviando correo a ${qLead.email}: ${mailErr.message}`);
+          }
+        }
+      }
+
+      savedLeadsOutput.push({
+        id: dbLeadId,
+        name: `${qLead.projectName} (${qLead.founderName})`,
+        businessName: qLead.projectName,
+        contactName: qLead.founderName,
+        address: `${qLead.sourcePlatform} · ${qLead.startupStage} · ${qLead.primaryTechnicalNeed}`,
+        phone: qLead.founderHandleOrRole,
+        website: qLead.websiteUrl || qLead.communityUrl,
+        email: qLead.email || 'Contacto vía Comunidad / Perfil',
+        rating: `${qLead.qualificationScore}% Fit`,
+        sourcePlatform: qLead.sourcePlatform,
+        startupStage: qLead.startupStage,
+        primaryTechnicalNeed: qLead.primaryTechnicalNeed,
+        emailSent: emailSentToLead,
+        metadata: leadMetadata
+      });
+    }
+
+    return {
+      searchQuery: `Product Hunt (${phTags.slice(0, 2).join(', ')}) + Reddit (r/${subreddits.slice(0, 2).join(', r/')}) + LinkedIn Seed`,
+      total_found: savedLeadsOutput.length,
+      audited_leads: savedLeadsOutput.length,
+      emails_sent: emailsSent,
+      leads: savedLeadsOutput
+    };
+  }
+}
+
+// ----------------------------------------------------
 // MOTOR DE EJECUCIÃ“N
 // ----------------------------------------------------
 export class ExecutionEngine {
@@ -2985,7 +3261,8 @@ export class ExecutionEngine {
     new LeadCollectorWorkflow(),
     new FormContactWorkflow(),
     new AutoOutreachGoogleMapsWorkflow(),
-    new GoogleStitchWorkflow()
+    new GoogleStitchWorkflow(),
+    new StartupIdeationRadarWorkflow()
   ];
 
   static async executeWorkflow(userWorkflowId: string, inputData?: any) {
