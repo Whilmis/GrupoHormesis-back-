@@ -8,15 +8,41 @@ export const workflowController = {
   // --- TEMPLATES ---
   async getTemplates(req: Request, res: Response) {
     try {
-      // Asegurar que la plantilla de Radar de Startups en Ideación exista siempre en la BD
+      // 1. Plantilla: Recolector de Startups en Ideación (Product Hunt + Reddit + LinkedIn)
       await prisma.workflowTemplate
         .upsert({
           where: { typeIdentifier: 'startup_ideation_radar' },
           update: {
-            name: '🚀 Radar de Startups & Fundadores (Ideación / Seed)',
+            name: '🚀 Recolector de Startups en Ideación (PH + Reddit + LinkedIn)',
             description:
-              'Pipeline multi-fuente (Product Hunt + Reddit + LinkedIn) que filtra productos maduros y extrae/contacta fundadores en fase de ideación que buscan socio técnico o necesitan desarrollar su MVP.',
-            requiredCreds: ['groq_api_key', 'gmail_address', 'gmail_app_password'],
+              'Pipeline en Node.js que integra Product Hunt, Reddit y LinkedIn para detectar fundadores en etapa semilla/ideación, filtrando productos con desarrollo avanzado y extrayendo necesidades técnicas primarias al CRM.',
+            requiredCreds: ['groq_api_key'],
+            configSchema: {
+              properties: {}
+            }
+          },
+          create: {
+            typeIdentifier: 'startup_ideation_radar',
+            name: '🚀 Recolector de Startups en Ideación (PH + Reddit + LinkedIn)',
+            description:
+              'Pipeline en Node.js que integra Product Hunt, Reddit y LinkedIn para detectar fundadores en etapa semilla/ideación, filtrando productos con desarrollo avanzado y extrayendo necesidades técnicas primarias al CRM.',
+            requiredCreds: ['groq_api_key'],
+            configSchema: {
+              properties: {}
+            }
+          }
+        })
+        .catch(e => console.warn('[getTemplates] Aviso sincronizando startup_ideation_radar:', e.message));
+
+      // 2. Plantilla Independiente: Envío de Correos a Startups Potenciales (Outreach Fundadores)
+      await prisma.workflowTemplate
+        .upsert({
+          where: { typeIdentifier: 'startup_outreach_sender' },
+          update: {
+            name: '✉️ Auto-Outreach para Startups & Fundadores (Ideación)',
+            description:
+              'Envía correos ejecutivos personalizados a los fundadores recolectados en fase de ideación/semilla, abordando su necesidad técnica primaria y ofreciendo una sesión estratégica de 15 min.',
+            requiredCreds: ['gmail_address', 'gmail_app_password', 'groq_api_key'],
             configSchema: {
               properties: {
                 calendarId: {
@@ -28,11 +54,11 @@ export const workflowController = {
             }
           },
           create: {
-            typeIdentifier: 'startup_ideation_radar',
-            name: '🚀 Radar de Startups & Fundadores (Ideación / Seed)',
+            typeIdentifier: 'startup_outreach_sender',
+            name: '✉️ Auto-Outreach para Startups & Fundadores (Ideación)',
             description:
-              'Pipeline multi-fuente (Product Hunt + Reddit + LinkedIn) que filtra productos maduros y extrae/contacta fundadores en fase de ideación que buscan socio técnico o necesitan desarrollar su MVP.',
-            requiredCreds: ['groq_api_key', 'gmail_address', 'gmail_app_password'],
+              'Envía correos ejecutivos personalizados a los fundadores recolectados en fase de ideación/semilla, abordando su necesidad técnica primaria y ofreciendo una sesión estratégica de 15 min.',
+            requiredCreds: ['gmail_address', 'gmail_app_password', 'groq_api_key'],
             configSchema: {
               properties: {
                 calendarId: {
@@ -44,7 +70,7 @@ export const workflowController = {
             }
           }
         })
-        .catch(e => console.warn('[getTemplates] Aviso sincronizando startup_ideation_radar:', e.message));
+        .catch(e => console.warn('[getTemplates] Aviso sincronizando startup_outreach_sender:', e.message));
 
       const templates = await prisma.workflowTemplate.findMany({
         orderBy: { createdAt: 'asc' }
@@ -227,7 +253,7 @@ export const workflowController = {
       }
 
       // 2. Si es un workflow pesado (Google Maps, Crawler Puppeteer, Outreach o Startup Radar), responder de inmediato en segundo plano
-      const isHeavy = ['lead_collector', 'auto_outreach_google_maps', 'google_stitch_designer', 'startup_ideation_radar'].includes(
+      const isHeavy = ['lead_collector', 'auto_outreach_google_maps', 'google_stitch_designer', 'startup_ideation_radar', 'startup_outreach_sender'].includes(
         workflow.template?.typeIdentifier
       );
 

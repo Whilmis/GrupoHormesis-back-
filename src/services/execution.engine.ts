@@ -2979,18 +2979,16 @@ class FormContactWorkflow extends BaseWorkflowType {
 }
 
 // ----------------------------------------------------
-// RADAR DE STARTUPS EN IDEACIÓN / SEED (Product Hunt + Reddit + LinkedIn + Outreach)
+// 1. RECOLECTOR DE STARTUPS EN IDEACIÓN / SEED (Product Hunt + Reddit + LinkedIn)
 // ----------------------------------------------------
 class StartupIdeationRadarWorkflow extends BaseWorkflowType {
   typeIdentifier = 'startup_ideation_radar';
 
   async execute(context: WorkflowContext): Promise<any> {
-    context.log('🚀 Iniciando Pipeline Radar de Startups en Fase de Ideación (Product Hunt + Reddit + LinkedIn)...');
+    context.log('🚀 Iniciando Recolector de Startups en Fase de Ideación (Product Hunt + Reddit + LinkedIn)...');
 
     const groqKey = context.credentials['groq_api_key'] || process.env.GROQ_API_KEY || '';
     const productHuntToken = context.credentials['producthunt_token'] || process.env.PRODUCTHUNT_TOKEN || '';
-    const gmailAddress = context.credentials['gmail_address'] || '';
-    const gmailAppPassword = (context.credentials['gmail_app_password'] || '').replace(/\s+/g, '');
 
     if (!groqKey) {
       throw new Error('Falta la credencial de Groq AI (groq_api_key) para analizar y filtrar startups en fase de ideación.');
@@ -3021,7 +3019,6 @@ class StartupIdeationRadarWorkflow extends BaseWorkflowType {
 
     const maxUpvotes = Number(config.maxUpvotesThreshold || 120);
     const batchLimit = Math.min(Math.max(Number(config.batchLimit || 6), 1), 15);
-    const autoSendEmails = config.autoSendEmails !== false; // Por defecto activo si hay credenciales de Gmail
 
     // 1. Recolectar candidatos desde las 3 fuentes (Product Hunt + Reddit + LinkedIn)
     const [phCandidates, redditCandidates, liCandidates] = await Promise.all([
@@ -3031,7 +3028,6 @@ class StartupIdeationRadarWorkflow extends BaseWorkflowType {
     ]);
 
     let combinedRaw: RawStartupCandidate[] = [];
-    // Intercalar candidatos de las 3 fuentes para diversidad en el lote
     const maxLen = Math.max(phCandidates.length, redditCandidates.length, liCandidates.length);
     for (let i = 0; i < maxLen; i++) {
       if (phCandidates[i]) combinedRaw.push(phCandidates[i]);
@@ -3073,39 +3069,6 @@ class StartupIdeationRadarWorkflow extends BaseWorkflowType {
       targetProjectId = firstProj?.id || null;
     }
 
-    // 3. Resolver URL del calendario para llamadas de descubrimiento con fundadores
-    const frontendUrl = getFrontendUrl();
-    let calendarId = config.calendarId;
-    if (!calendarId) {
-      const userCal =
-        (await prisma.calendar.findFirst({ where: { userId: context.workflow.userId }, select: { id: true } })) ||
-        (await prisma.calendar.findFirst({ select: { id: true } }));
-      calendarId = userCal?.id;
-    }
-
-    const companyName =
-      config.businessName ||
-      extractBusinessNameFromText(config.businessContext, context.workflow.name || 'Grupo Hormesis');
-
-    // Configurar transporte SMTP si están disponibles las credenciales de Gmail y autoSendEmails está activo
-    let transporter: any = null;
-    if (autoSendEmails && gmailAddress && gmailAppPassword) {
-      transporter = nodemailer.createTransport({
-        host: 'smtp.gmail.com',
-        port: 465,
-        secure: true,
-        auth: {
-          user: gmailAddress,
-          pass: gmailAppPassword
-        },
-        family: 4,
-        connectionTimeout: 10000,
-        greetingTimeout: 10000,
-        socketTimeout: 15000
-      });
-    }
-
-    let emailsSent = 0;
     const savedLeadsOutput: any[] = [];
 
     for (const qLead of qualifiedLeads) {
@@ -3152,79 +3115,6 @@ class StartupIdeationRadarWorkflow extends BaseWorkflowType {
         }
       }
 
-      // 4. Envío automático de correo personalizado al fundador si dispone de email válido
-      const bookingUrl = calendarId
-        ? `${frontendUrl}/book/${calendarId}${dbLeadId ? `?ref=${dbLeadId}` : ''}`
-        : `${frontendUrl}/contacto`;
-
-      let emailSentToLead = false;
-      if (transporter && qLead.email) {
-        const emailValidation = await EmailValidatorService.validateEmail(qLead.email);
-        if (emailValidation.isValid) {
-          try {
-            const customTemplate = config.generated_outreach_email;
-            const rawSubject = customTemplate?.subject || qLead.aiSubjectLine || `Sobre ${qLead.projectName} — Socio Técnico & MVP`;
-            const finalSubject = rawSubject
-              .replace(/\[Nombre\]|\{\{name\}\}/gi, qLead.founderName)
-              .replace(/\[Empresa\]|\{\{businessName\}\}/gi, qLead.projectName)
-              .replace(/\[Plataforma\]/gi, qLead.sourcePlatform);
-
-            const introBodyHtml = customTemplate?.body
-              ? customTemplate.body
-                  .replace(/\[Nombre\]|\{\{name\}\}/gi, qLead.founderName)
-                  .replace(/\[Empresa\]|\{\{businessName\}\}/gi, qLead.projectName)
-                  .replace(/\[Necesidad_Tecnica\]/gi, qLead.primaryTechnicalNeed)
-                  .replace(/\[Plataforma\]/gi, qLead.sourcePlatform)
-              : `<p style='margin: 0 0 14px 0;'>${qLead.aiCustomPitch}</p>
-                 <p style='margin: 0 0 14px 0;'>Detectamos que en esta etapa de <strong>${qLead.startupStage}</strong> el foco crítico para <strong>${qLead.projectName}</strong> es: <strong>${qLead.primaryTechnicalNeed}</strong>.</p>`;
-
-            const finalHtml = ensureExecutiveFormEmailHtml(
-              introBodyHtml,
-              qLead.primaryTechnicalNeed,
-              bookingUrl,
-              {
-                companyName,
-                businessContext: config.businessContext,
-                brandVoice: config.brandVoice,
-                replyMailto: `mailto:${gmailAddress}?subject=${encodeURIComponent('Re: ' + finalSubject)}`
-              }
-            )
-              .replace(/\[Nombre\]|\{\{name\}\}/gi, qLead.founderName)
-              .replace(/\[Empresa\]|\{\{businessName\}\}/gi, qLead.projectName)
-              .replace(/\[Link_Calendario\]|\{\{bookingUrl\}\}/gi, bookingUrl);
-
-            await transporter.sendMail({
-              from: `"${companyName}" <${gmailAddress}>`,
-              to: qLead.email,
-              subject: finalSubject,
-              text: finalHtml.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim(),
-              html: finalHtml
-            });
-
-            emailsSent++;
-            emailSentToLead = true;
-            context.log(`✉️ Correo personalizado enviado a ${qLead.founderName} (${qLead.email}) [${qLead.projectName}]`);
-
-            if (dbLeadId) {
-              await prisma.lead.update({
-                where: { id: dbLeadId },
-                data: { status: 'CONTACTADO' }
-              });
-              await prisma.activity.create({
-                data: {
-                  leadId: dbLeadId,
-                  type: 'AUTO_EMAIL',
-                  title: `Outreach Fundador (${qLead.sourcePlatform}) Enviado`,
-                  description: `<strong>Asunto: ${finalSubject}</strong><br><br>${finalHtml}`
-                }
-              });
-            }
-          } catch (mailErr: any) {
-            context.log(`Aviso enviando correo a ${qLead.email}: ${mailErr.message}`);
-          }
-        }
-      }
-
       savedLeadsOutput.push({
         id: dbLeadId,
         name: `${qLead.projectName} (${qLead.founderName})`,
@@ -3238,17 +3128,228 @@ class StartupIdeationRadarWorkflow extends BaseWorkflowType {
         sourcePlatform: qLead.sourcePlatform,
         startupStage: qLead.startupStage,
         primaryTechnicalNeed: qLead.primaryTechnicalNeed,
-        emailSent: emailSentToLead,
         metadata: leadMetadata
       });
     }
+
+    context.log(`💾 Se guardaron ${savedLeadsOutput.length} leads de startups en ideación en el CRM listos para el workflow de Auto-Outreach.`);
 
     return {
       searchQuery: `Product Hunt (${phTags.slice(0, 2).join(', ')}) + Reddit (r/${subreddits.slice(0, 2).join(', r/')}) + LinkedIn Seed`,
       total_found: savedLeadsOutput.length,
       audited_leads: savedLeadsOutput.length,
-      emails_sent: emailsSent,
       leads: savedLeadsOutput
+    };
+  }
+}
+
+// ----------------------------------------------------
+// 2. ENVÍO DE CORREOS A STARTUPS POTENCIALES (Auto-Outreach Fundadores)
+// ----------------------------------------------------
+class StartupOutreachSenderWorkflow extends BaseWorkflowType {
+  typeIdentifier = 'startup_outreach_sender';
+
+  async execute(context: WorkflowContext): Promise<any> {
+    context.log('✉️ Iniciando Auto-Outreach para Startups & Fundadores en Fase de Ideación...');
+
+    const gmailAddress = context.credentials['gmail_address'];
+    const gmailAppPassword = (context.credentials['gmail_app_password'] || '').replace(/\s+/g, '');
+
+    if (!gmailAddress || !gmailAppPassword) {
+      throw new Error('Faltan credenciales de Gmail (gmail_address o gmail_app_password).');
+    }
+
+    const config = (context.workflow.config || {}) as any;
+    const sourceWorkflowId = config?.sourceWorkflowId;
+    const maxEmailsPerDay = parseInt(config?.maxEmailsPerDay || '30', 10);
+    const customTemplate = config?.generated_outreach_email;
+
+    let sourceWorkflow = sourceWorkflowId
+      ? await prisma.userWorkflow.findUnique({ where: { id: sourceWorkflowId } })
+      : null;
+
+    if (!sourceWorkflow || !sourceWorkflow.projectId) {
+      const fallbackWf = await prisma.userWorkflow.findFirst({
+        where: {
+          userId: context.workflow.userId,
+          template: { typeIdentifier: 'startup_ideation_radar' },
+          projectId: { not: null }
+        }
+      });
+      if (fallbackWf) {
+        sourceWorkflow = fallbackWf;
+        context.log('Vinculado automáticamente con el Recolector de Startups activo.');
+      } else if (context.workflow.projectId) {
+        sourceWorkflow = context.workflow;
+      } else {
+        const firstProj = await prisma.project.findFirst({
+          where: { userId: context.workflow.userId },
+          select: { id: true }
+        });
+        if (!firstProj) {
+          throw new Error('No se encontró una campaña de Recolector de Startups ni un proyecto asociado.');
+        }
+        sourceWorkflow = { ...context.workflow, projectId: firstProj.id };
+      }
+    }
+
+    const batchLimit = Math.min(maxEmailsPerDay <= 10 ? 5 : 10, maxEmailsPerDay);
+    const candidateLeads = await prisma.lead.findMany({
+      where: {
+        projectId: sourceWorkflow.projectId as string,
+        status: 'NUEVO',
+        email: { not: null }
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 40
+    });
+
+    // Filtrar preferentemente los leads provenientes de Startup Radar
+    const startupLeads = candidateLeads.filter(l => {
+      const meta = typeof l.metadata === 'object' && l.metadata ? (l.metadata as any) : {};
+      return Boolean(meta.startupRadar || (l.source && l.source.includes('Startup Radar')));
+    });
+
+    const leadsToProcess = (startupLeads.length > 0 ? startupLeads : candidateLeads).slice(0, batchLimit);
+
+    if (leadsToProcess.length === 0) {
+      context.log('No hay leads de startups en estado NUEVO con correo electrónico pendiente de contactar.');
+      return { message: '0 fundadores contactados (no hay leads nuevos con email pendiente)', total_found: 0, emails_sent: 0 };
+    }
+
+    context.log(`Seleccionados ${leadsToProcess.length} fundadores/startups para envío personalizado en esta tanda.`);
+
+    const transporter = nodemailer.createTransport({
+      host: 'smtp.gmail.com',
+      port: 465,
+      secure: true,
+      auth: {
+        user: gmailAddress,
+        pass: gmailAppPassword
+      },
+      family: 4,
+      connectionTimeout: 10000,
+      greetingTimeout: 10000,
+      socketTimeout: 15000
+    });
+
+    const frontendUrl = getFrontendUrl();
+    let calendarId = config?.calendarId;
+    if (!calendarId) {
+      const defaultCal =
+        (await prisma.calendar.findFirst({ where: { userId: context.workflow.userId } })) ||
+        (await prisma.calendar.findFirst());
+      calendarId = defaultCal?.id;
+    }
+
+    const companyName =
+      config?.businessName ||
+      extractBusinessNameFromText(config?.businessContext, context.workflow.name || 'Grupo Hormesis');
+
+    let sentCount = 0;
+
+    for (const lead of leadsToProcess) {
+      const emailValidation = await EmailValidatorService.validateEmail(lead.email as string);
+      if (!emailValidation.isValid) {
+        context.log(`⚠️ Descartando correo inválido ${lead.email} (${lead.businessName}): ${emailValidation.reason}`);
+        await prisma.lead.update({
+          where: { id: lead.id },
+          data: { status: 'CORREO_INVALIDO' }
+        });
+        continue;
+      }
+
+      const meta = typeof lead.metadata === 'string' ? JSON.parse(lead.metadata) : (lead.metadata || {});
+      const founderName = lead.contactName || meta.founderName || 'Founder';
+      const projectName = lead.businessName || 'tu Startup';
+      const sourcePlatform = meta.sourcePlatform || 'Product Hunt / Reddit';
+      const startupStage = meta.startupStage || 'Ideación / Pre-Seed';
+      const primaryNeed = meta.primaryTechnicalNeed || 'Desarrollo de MVP & Socio Tecnológico';
+      const painPoints: string[] = Array.isArray(meta.painPoints) ? meta.painPoints : [];
+
+      const bookingUrl = calendarId
+        ? `${frontendUrl}/book/${calendarId}?ref=${lead.id}`
+        : `${frontendUrl}/contacto`;
+
+      const rawSubject =
+        customTemplate?.subject ||
+        meta.aiSubjectLine ||
+        `Sobre ${projectName} en ${sourcePlatform} · Socio Técnico & MVP`;
+
+      const finalSubject = rawSubject
+        .replace(/\[Nombre\]|\{\{name\}\}/gi, founderName)
+        .replace(/\[Empresa\]|\{\{businessName\}\}/gi, projectName)
+        .replace(/\[Plataforma\]/gi, sourcePlatform);
+
+      const painPointsListHtml =
+        painPoints.length > 0
+          ? `<ul style='margin: 10px 0 14px 0; padding-left: 18px;'>${painPoints
+              .map(p => `<li style='margin-bottom: 6px;'>${p}</li>`)
+              .join('')}</ul>`
+          : '';
+
+      const introBodyHtml = customTemplate?.body
+        ? customTemplate.body
+            .replace(/\[Nombre\]|\{\{name\}\}/gi, founderName)
+            .replace(/\[Empresa\]|\{\{businessName\}\}/gi, projectName)
+            .replace(/\[Necesidad_Tecnica\]/gi, primaryNeed)
+            .replace(/\[Plataforma\]/gi, sourcePlatform)
+        : `<p style='margin: 0 0 14px 0;'>${
+            meta.aiCustomPitch ||
+            `Hola <strong>${founderName}</strong>, estuvimos revisando lo que estás construyendo con <strong>${projectName}</strong> en ${sourcePlatform}.`
+          }</p>
+           <p style='margin: 0 0 12px 0;'>Sabemos que en la fase de <strong>${startupStage}</strong> el reto técnico principal es <strong>${primaryNeed}</strong>:</p>
+           ${painPointsListHtml}`;
+
+      const finalHtml = ensureExecutiveFormEmailHtml(
+        introBodyHtml,
+        primaryNeed,
+        bookingUrl,
+        {
+          companyName,
+          businessContext: config?.businessContext,
+          brandVoice: config?.brandVoice,
+          replyMailto: `mailto:${gmailAddress}?subject=${encodeURIComponent('Re: ' + finalSubject)}`
+        }
+      )
+        .replace(/\[Nombre\]|\{\{name\}\}/gi, founderName)
+        .replace(/\[Empresa\]|\{\{businessName\}\}/gi, projectName)
+        .replace(/\[Link_Calendario\]|\{\{bookingUrl\}\}/gi, bookingUrl);
+
+      try {
+        await transporter.sendMail({
+          from: `"${companyName}" <${gmailAddress}>`,
+          to: lead.email as string,
+          subject: finalSubject,
+          text: finalHtml.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim(),
+          html: finalHtml
+        });
+
+        await prisma.lead.update({
+          where: { id: lead.id },
+          data: { status: 'CONTACTADO' }
+        });
+
+        await prisma.activity.create({
+          data: {
+            leadId: lead.id,
+            type: 'AUTO_EMAIL',
+            title: `Outreach Startup (${sourcePlatform}) Enviado`,
+            description: `<strong>Asunto: ${finalSubject}</strong><br><br>${finalHtml}`
+          }
+        });
+
+        sentCount++;
+        context.log(`✅ Correo enviado a ${founderName} (${lead.email}) — Startup: ${projectName}`);
+      } catch (err: any) {
+        context.log(`Error enviando correo a ${lead.email}: ${err.message}`);
+      }
+    }
+
+    return {
+      message: `Proceso finalizado. Se enviaron ${sentCount} correos personalizados a fundadores.`,
+      total_found: leadsToProcess.length,
+      emails_sent: sentCount
     };
   }
 }
@@ -3262,7 +3363,8 @@ export class ExecutionEngine {
     new FormContactWorkflow(),
     new AutoOutreachGoogleMapsWorkflow(),
     new GoogleStitchWorkflow(),
-    new StartupIdeationRadarWorkflow()
+    new StartupIdeationRadarWorkflow(),
+    new StartupOutreachSenderWorkflow()
   ];
 
   static async executeWorkflow(userWorkflowId: string, inputData?: any) {
