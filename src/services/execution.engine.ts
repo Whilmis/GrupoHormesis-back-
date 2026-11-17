@@ -2979,97 +2979,61 @@ class FormContactWorkflow extends BaseWorkflowType {
 }
 
 // ----------------------------------------------------
-// 1. RECOLECTOR DE STARTUPS EN IDEACIÓN / SEED (Product Hunt + Reddit + LinkedIn)
+// 1. RECOLECTOR DE STARTUPS EN IDEACIÓN / SEED (Reddit + GitHub Indie ES + Show HN)
 // ----------------------------------------------------
 class StartupIdeationRadarWorkflow extends BaseWorkflowType {
   typeIdentifier = 'startup_ideation_radar';
 
   async execute(context: WorkflowContext): Promise<any> {
-    context.log('🚀 Iniciando Recolector de Startups en Fase de Ideación (Product Hunt + Reddit + LinkedIn)...');
+    context.log('🚀 Iniciando Recolector de Startups en Fase de Ideación (Reddit + GitHub Indie ES + Show HN)...');
 
     const groqKey = context.credentials['groq_api_key'] || process.env.GROQ_API_KEY || '';
-    const productHuntToken = context.credentials['producthunt_token'] || process.env.PRODUCTHUNT_TOKEN || '';
 
     if (!groqKey) {
       throw new Error('Falta la credencial de Groq AI (groq_api_key) para analizar y filtrar startups en fase de ideación.');
     }
 
     const config = (context.workflow.config || {}) as StartupRadarConfig;
-    const phTags = (config.productHuntTags || 'pre-launch, ideation, mvp, saas, artificial-intelligence, developer-tools')
-      .split(',')
-      .map(s => s.trim())
-      .filter(Boolean);
-    const subreddits = (config.redditSubreddits || 'cofounder, startups, SaaS, SideProject, Entrepreneur, indiehackers')
+    const subreddits = (config.redditSubreddits || 'cofounder, startups, SaaS, SideProject, Entrepreneur, indiehackers, emprendedores')
       .split(',')
       .map(s => s.trim().replace(/^r\//i, ''))
       .filter(Boolean);
     const valKeywords = (
       config.validationKeywords ||
-      'looking for technical cofounder, need developer, validating idea, building MVP, non-technical founder, seeking CTO'
-    )
-      .split(',')
-      .map(s => s.trim())
-      .filter(Boolean);
-    const liKeywords = (
-      config.linkedinKeywords || 'Stealth Startup, Pre-Seed Founder, Looking for Technical Co-Founder, Building MVP'
+      'busco socio técnico, cofundador, looking for technical cofounder, need developer, validating idea, building MVP'
     )
       .split(',')
       .map(s => s.trim())
       .filter(Boolean);
 
-    const maxUpvotes = Number(config.maxUpvotesThreshold || 120);
     const batchLimit = Math.min(Math.max(Number(config.batchLimit || 6), 1), 15);
 
-    // 1. Recolectar candidatos en fase de ideación / semilla dando prioridad a proyectos en Español
-    const [esAndLiCandidates, redditCandidates, phCandidates] = await Promise.all([
-      StartupRadarService.fetchSpanishIdeationAndLinkedInFounders(
-        liKeywords,
-        config.targetGeoOrLanguage || 'España OR Latam',
+    // 1. Recolectar candidatos en fase de ideación desde fuentes JSON con correo verificable (sin Product Hunt)
+    const [redditCandidates, ghSpanishCandidates, showHnCandidates] = await Promise.all([
+      StartupRadarService.fetchRedditIdeationFounders(subreddits, valKeywords, context.log),
+      StartupRadarService.fetchGitHubSpanishIndieFounders(
+        config.targetGeoOrLanguage || 'Spain OR Latam',
         context.log
       ),
-      StartupRadarService.fetchRedditIdeationFounders(subreddits, valKeywords, context.log),
-      StartupRadarService.fetchProductHuntIdeationMakers(phTags, maxUpvotes, productHuntToken, context.log)
+      StartupRadarService.fetchShowHNAndEarlyBuilders(context.log)
     ]);
 
-    const allFetched = [...esAndLiCandidates, ...redditCandidates, ...phCandidates];
+    const allFetched = [...ghSpanishCandidates, ...redditCandidates, ...showHnCandidates];
     const spanishFirst = allFetched.sort((a, b) => Number(b.isSpanish) - Number(a.isSpanish));
 
     context.log(
-      `📊 Señales de ideación detectadas: Ecosistema ES & LinkedIn (${esAndLiCandidates.length}), Reddit (${redditCandidates.length}), Product Hunt (${phCandidates.length}).`
+      `📊 Señales de ideación detectadas: Reddit (${redditCandidates.length}), GitHub Indie ES/Latam (${ghSpanishCandidates.length}), Show HN (${showHnCandidates.length}).`
     );
 
-    context.log(`🧠 Filtrando empresas maduras, extrayendo correos de fundadores y armando Ficha de Ideación con Groq AI...`);
+    context.log(`🧠 Verificando correos de fundadores, descartando empresas maduras y armando Ficha de Ideación con Groq AI...`);
 
-    let qualifiedLeads = await StartupRadarService.qualifyAndFilterWithAI(
+    const qualifiedLeads = await StartupRadarService.qualifyAndFilterWithAI(
       spanishFirst,
       config,
       groqKey,
       batchLimit,
       context.log
     );
-
-    // Si faltan proyectos tempranos para completar el lote, buscar micro-startups y betas adicionales en español
-    if (qualifiedLeads.length < batchLimit) {
-      const needed = batchLimit - qualifiedLeads.length;
-      const existingUrls = new Set<string>(qualifiedLeads.map(l => l.websiteUrl || l.communityUrl));
-      const discoveredEs = await StartupRadarService.huntEmergingSpanishIndieProjects(
-        config,
-        groqKey,
-        needed,
-        existingUrls,
-        context.log
-      );
-      if (discoveredEs.length > 0) {
-        const extraQualified = await StartupRadarService.qualifyAndFilterWithAI(
-          discoveredEs,
-          config,
-          groqKey,
-          needed,
-          context.log
-        );
-        qualifiedLeads = [...qualifiedLeads, ...extraQualified].slice(0, batchLimit);
-      }
-    }
 
     context.log(`✅ ${qualifiedLeads.length} proyectos en fase de ideación/semilla con correo verificado listos.`);
 
@@ -3157,7 +3121,7 @@ class StartupIdeationRadarWorkflow extends BaseWorkflowType {
     context.log(`💾 Se guardaron ${savedLeadsOutput.length} leads de startups con correo verificado en el CRM.`);
 
     return {
-      searchQuery: `Prioridad Español (España / Latam) · Product Hunt + Reddit + LinkedIn Seed`,
+      searchQuery: `Prioridad Español (España / Latam) · Reddit + GitHub Indie/MVP + Show HN`,
       total_found: savedLeadsOutput.length,
       audited_leads: savedLeadsOutput.length,
       leads: savedLeadsOutput

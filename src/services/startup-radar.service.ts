@@ -1,13 +1,11 @@
 import { EmailValidatorService } from './email-validator.service';
 
 export interface StartupRadarConfig {
-  productHuntTags?: string;
   redditSubreddits?: string;
   validationKeywords?: string;
   linkedinKeywords?: string;
   targetGeoOrLanguage?: string;
   excludeAdvancedKeywords?: string;
-  maxUpvotesThreshold?: number;
   batchLimit?: number;
   autoSendEmails?: boolean;
   businessName?: string;
@@ -23,7 +21,7 @@ export interface StartupRadarConfig {
 }
 
 export interface RawStartupCandidate {
-  sourcePlatform: 'Product Hunt' | 'Reddit' | 'LinkedIn';
+  sourcePlatform: 'Reddit' | 'GitHub Indie / MVP' | 'Show HN / Builders' | 'LinkedIn / Ecosistema ES';
   sourceDetail: string;
   projectName: string;
   founderName: string;
@@ -51,12 +49,12 @@ export interface QualifiedStartupLead extends RawStartupCandidate {
   aiSubjectLine: string;
 }
 
-// Lista negra estricta de tecnológicas grandes y startups españolas/globales YA consolidadas (Series A+, scaleups)
+// Lista negra estricta de grandes tecnológicas y scaleups consolidadas
 const EXCLUDE_MATURE_COMPANIES_REGEX =
-  /\b(zoom|google|microsoft|apple|meta|facebook|amazon|netflix|openai|anthropic|stripe|notion|figma|canva|hubspot|salesforce|shopify|slack|atlassian|payflow|quipu|getquipu|flanks|factorial|holded|cabify|glovo|jobandtalent|travelperk|typeform|wallapop|fintonic|indexa|badi|bizum|idealista|fotocasa|freepic|freepik|domestika|flywire|sequra|capchase|paack|heura|colvin|series [a-f]|ipo|enterprise-grade|fortune 500|soc2|iso 27001|100\+ employees|50\+ empleados|trabaja con nosotros|sala de prensa|nota de prensa|\$50k mrr|\$100k mrr|1m\+ users)\b/i;
+  /\b(zoom|google|microsoft|apple|meta|facebook|amazon|netflix|openai|anthropic|stripe|notion|figma|canva|hubspot|salesforce|shopify|slack|atlassian|payflow|quipu|getquipu|flanks|factorial|holded|cabify|glovo|jobandtalent|travelperk|typeform|wallapop|fintonic|indexa|badi|bizum|idealista|fotocasa|freepik|domestika|flywire|sequra|capchase|paack|heura|colvin|mercadona|inditex|santander|bbva|telefonica|endesa|iberdrola|series [a-f]|ipo|enterprise-grade|fortune 500|soc2|iso 27001|100\+ employees|50\+ empleados|trabaja con nosotros|sala de prensa|nota de prensa|\$50k mrr|\$100k mrr|1m\+ users)\b/i;
 
 const EXCLUDED_PLATFORM_DOMAINS =
-  /reddit\.com|redd\.it|producthunt\.com|linkedin\.com|imgur\.com|giphy\.com|youtube\.com|youtu\.be|twitter\.com|x\.com|facebook\.com|instagram\.com|discord\.gg|github\.com|medium\.com|substack\.com|google\.com|apple\.com|play\.google|apps\.apple|duckduckgo\.com|bing\.com|wikipedia\.org|elpais\.com|expansion\.com|eleconomista\.es|cincodias\.com|xataka\.com|genbeta\.com|forbes\.es|emprendedores\.es|elreferente\.es/i;
+  /reddit\.com|redd\.it|producthunt\.com|linkedin\.com|imgur\.com|giphy\.com|youtube\.com|youtu\.be|twitter\.com|x\.com|facebook\.com|instagram\.com|discord\.gg|github\.com|medium\.com|substack\.com|google\.com|apple\.com|play\.google|apps\.apple|duckduckgo\.com|bing\.com|wikipedia\.org|elpais\.com|expansion\.com|eleconomista\.es|cincodias\.com|xataka\.com|genbeta\.com|forbes\.es|emprendedores\.es|elreferente\.es|startups\.com|cal\.com|loom\.com|linktr\.ee|notion\.so|docs\.google\.com|forms\.gle/i;
 
 export class StartupRadarService {
   /**
@@ -65,7 +63,7 @@ export class StartupRadarService {
   static isSpanishContent(text: string): boolean {
     if (!text) return false;
     const matches = text.match(
-      /\b(españa|madrid|barcelona|valencia|sevilla|bilbao|málaga|méxico|colombia|argentina|chile|perú|latam|proyecto|busco|buscando|socio|cofundador|fundador|desarrollador|programador|validar|validando|validación|idea|startup|herramienta|plataforma|estamos|creando|construyendo|lanzando|lista de espera|beta|prototipo|para|con|por|una|los|las|del|que)\b|[áéíóúñ¿¡]/gi
+      /\b(españa|madrid|barcelona|valencia|sevilla|bilbao|málaga|zaragoza|méxico|colombia|argentina|chile|perú|uruguay|latam|proyecto|busco|buscando|socio|cofundador|fundador|desarrollador|programador|validar|validando|validación|idea|startup|herramienta|plataforma|estamos|creando|construyendo|lanzando|lista de espera|beta|prototipo|para|con|por|una|los|las|del|que|gestión|facturación|autónomos|pymes|clientes)\b|[áéíóúñ¿¡]/gi
     );
     return Boolean(matches && matches.length >= 2);
   }
@@ -95,7 +93,7 @@ export class StartupRadarService {
   }
 
   /**
-   * Extrae correos electrónicos directamente de un post o bio
+   * Extrae correos electrónicos válidos directamente de un bloque de texto
    */
   static extractEmailFromPlainText(text: string): string | null {
     if (!text) return null;
@@ -105,14 +103,20 @@ export class StartupRadarService {
       if (
         !clean.endsWith('.png') &&
         !clean.endsWith('.jpg') &&
+        !clean.endsWith('.jpeg') &&
         !clean.endsWith('.svg') &&
         !clean.endsWith('.webp') &&
+        !clean.endsWith('.gif') &&
         !clean.includes('example.com') &&
+        !clean.includes('yourdomain') &&
+        !clean.includes('domain.com') &&
+        !clean.includes('email.com') &&
         !clean.includes('sentry.io') &&
         !clean.includes('wixpress.com') &&
         !clean.includes('reddit.com') &&
         !clean.includes('producthunt.com') &&
         !clean.includes('linkedin.com') &&
+        !clean.includes('github.com') &&
         !clean.includes('noreply') &&
         !clean.includes('no-reply')
       ) {
@@ -123,9 +127,7 @@ export class StartupRadarService {
   }
 
   /**
-   * Analiza la landing page de un proyecto temprano / MVP / waitlist para:
-   * 1) Verificar que NO sea una corporación madura (descarta si detecta señales de gran empresa).
-   * 2) Extraer el correo del fundador o del proyecto temprano.
+   * Inspecciona la landing de un proyecto temprano / MVP para extraer el correo del fundador
    */
   static async inspectEarlyProjectLanding(
     websiteUrl: string
@@ -155,7 +157,7 @@ export class StartupRadarService {
 
       const fetchPageHtml = async (
         targetUrl: string,
-        timeoutMs = 5000
+        timeoutMs = 4500
       ): Promise<{ html: string; finalUrl: string } | null> => {
         try {
           const controller = new AbortController();
@@ -179,7 +181,7 @@ export class StartupRadarService {
         }
       };
 
-      const homeData = await fetchPageHtml(websiteUrl, 5000);
+      const homeData = await fetchPageHtml(websiteUrl, 4500);
       if (!homeData) return { email: null, finalUrl: websiteUrl };
 
       resolvedUrl = homeData.finalUrl;
@@ -193,58 +195,35 @@ export class StartupRadarService {
       const title = titleMatch?.[1]?.replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim();
       const description = descMatch?.[1]?.replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim();
 
-      // Comprobar si la web muestra señales de ser una empresa grande ya consolidada
       const plainSample = html
         .replace(/<script[\s\S]*?<\/script>/gi, ' ')
         .replace(/<style[\s\S]*?<\/style>/gi, ' ')
         .replace(/<[^>]+>/g, ' ')
-        .substring(0, 8000);
+        .substring(0, 6000);
 
-      if (EXCLUDE_MATURE_COMPANIES_REGEX.test(`${title || ''} ${description || ''} ${plainSample.substring(0, 2500)}`)) {
+      if (EXCLUDE_MATURE_COMPANIES_REGEX.test(`${title || ''} ${description || ''}`)) {
         return { email: null, finalUrl: resolvedUrl, isMatureCompany: true };
       }
 
       const isSpanish =
         /lang=["']es/i.test(html) ||
         parsed.hostname.endsWith('.es') ||
-        this.isSpanishContent(`${title || ''} ${description || ''} ${plainSample.substring(0, 1500)}`);
+        this.isSpanishContent(`${title || ''} ${description || ''} ${plainSample.substring(0, 1200)}`);
 
-      // 1. Extraer email de la landing principal
+      // 1. Extraer email real visible en la página principal
       let email = await EmailValidatorService.extractBestEmailFromHtml(html, resolvedUrl);
       if (email) {
         return { email, finalUrl: resolvedUrl, title, description, isSpanish, isMatureCompany: false };
       }
 
-      // 2. Probar rutas de contacto ligero
-      for (const path of ['/contacto', '/contact', '/about']) {
-        const subData = await fetchPageHtml(`${origin}${path}`, 3200);
+      // 2. Probar subpáginas de contacto (/contacto, /contact, /about)
+      for (const path of ['/contacto', '/contact']) {
+        const subData = await fetchPageHtml(`${origin}${path}`, 3000);
         if (subData?.html) {
           email = await EmailValidatorService.extractBestEmailFromHtml(subData.html, resolvedUrl);
           if (email) {
             return { email, finalUrl: resolvedUrl, title, description, isSpanish, isMatureCompany: false };
           }
-        }
-      }
-
-      // 3. Si el dominio del proyecto tiene servidor de correo MX válido, resolver el buzón directo del fundador/proyecto
-      const cleanHost = new URL(resolvedUrl).hostname.replace(/^www\./i, '');
-      if (
-        !EXCLUDED_PLATFORM_DOMAINS.test(cleanHost) &&
-        !cleanHost.endsWith('.vercel.app') &&
-        !cleanHost.endsWith('.netlify.app') &&
-        !cleanHost.endsWith('.github.io')
-      ) {
-        const probeEmail = isSpanish ? `hola@${cleanHost}` : `hello@${cleanHost}`;
-        const validation = await EmailValidatorService.validateEmail(probeEmail, resolvedUrl);
-        if (validation.isValid) {
-          return {
-            email: probeEmail,
-            finalUrl: resolvedUrl,
-            title,
-            description,
-            isSpanish,
-            isMatureCompany: false
-          };
         }
       }
 
@@ -255,8 +234,9 @@ export class StartupRadarService {
   }
 
   /**
-   * 1. REDDIT PIPELINE: Fundadores buscando Socio Técnico, Validando Idea o Mostrando su MVP Temprano
-   * Prioriza comunidades en español y posts donde el autor comparte su idea/prototipo o pide ayuda técnica.
+   * FUENTE 1: REDDIT API (Búsqueda directa de hilos de fundadores con email o MVP linkeado)
+   * Prioriza posts en español y de comunidades de startups (r/cofounder, r/startups, r/SideProject, r/SaaS, r/emprendedores)
+   * donde el fundador incluye un correo de contacto directo o la URL de su MVP temprano.
    */
   static async fetchRedditIdeationFounders(
     subreddits: string[],
@@ -265,28 +245,36 @@ export class StartupRadarService {
   ): Promise<RawStartupCandidate[]> {
     const candidates: RawStartupCandidate[] = [];
 
-    const queries = [
-      // 1. Posts en español de fundadores buscando socio técnico / cofundador / validando MVP
-      `https://www.reddit.com/search.json?q=${encodeURIComponent(
-        '("busco socio" OR "socio técnico" OR "cofundador" OR "validando" OR "mi MVP" OR "mi primer SaaS" OR "estoy creando" OR "feedback de mi app" OR "busco programador")'
-      )}&sort=new&limit=25&t=year`,
-      // 2. Subreddits de cofounders y proyectos indie
-      `https://www.reddit.com/r/cofounder+SideProject+startups+SaaS+indiehackers+emprendedores/search.json?q=${encodeURIComponent(
-        '("looking for technical" OR "need developer" OR "validating" OR "early beta" OR "waitlist" OR "socio" OR "MVP")'
-      )}&restrict_sr=1&sort=new&limit=25&t=month`
+    const redditQueries = [
+      // 1. Hilos en español con correo directo o proyecto en validación
+      'https://www.reddit.com/search.json?q=' +
+        encodeURIComponent(
+          '(startup OR proyecto OR SaaS OR MVP OR cofundador OR "socio técnico" OR app) ("@gmail.com" OR "hola@" OR "contacto@")'
+        ) +
+        '&sort=new&limit=35&t=year',
+      // 2. Subreddits de cofounders y startups con correo directo en el post
+      'https://www.reddit.com/r/cofounder+startups+SideProject+SaaS+indiehackers+Entrepreneur/search.json?q=' +
+        encodeURIComponent('("gmail.com" OR "hello@" OR "founder@" OR "contact@") (MVP OR cofounder OR developer OR beta OR startup)') +
+        '&restrict_sr=1&sort=new&limit=35&t=year',
+      // 3. Hilos en español de validación / búsqueda de socio técnico con URL de proyecto
+      'https://www.reddit.com/search.json?q=' +
+        encodeURIComponent(
+          '("busco socio" OR "cofundador" OR "mi primer SaaS" OR "estoy creando" OR "feedback de mi" OR "validando") ("https://")'
+        ) +
+        '&sort=new&limit=25&t=year'
     ];
 
-    log?.(`[Reddit Ideation] Buscando hilos de fundadores validando ideas o buscando socio técnico...`);
+    log?.(`[Reddit API] Escaneando hilos de fundadores en ideación y búsqueda de socio técnico con contacto directo...`);
 
-    for (const apiUrl of queries) {
-      if (candidates.length >= 18) break;
+    for (const apiUrl of redditQueries) {
+      if (candidates.length >= 20) break;
       try {
         const controller = new AbortController();
-        const t = setTimeout(() => controller.abort(), 7000);
+        const t = setTimeout(() => controller.abort(), 7500);
         const res = await fetch(apiUrl, {
           signal: controller.signal,
           headers: {
-            'User-Agent': 'nodejs:hormesis.ideation.radar:v3.0 (by /u/hormesis_ai)',
+            'User-Agent': 'nodejs:hormesis.startup.radar:v4.0 (by /u/hormesis_venture)',
             Accept: 'application/json'
           }
         });
@@ -308,36 +296,36 @@ export class StartupRadarService {
           const permalink = post.permalink ? `https://www.reddit.com${post.permalink}` : '';
 
           const fullText = `${title} ${selftext}`;
-          // Descartar posts con demasiados votos (productos ya virales/maduros) o empresas consolidadas
-          if (score > 120 || EXCLUDE_MATURE_COMPANIES_REGEX.test(fullText) || selftext.length < 40) {
+          if (score > 180 || EXCLUDE_MATURE_COMPANIES_REGEX.test(fullText) || selftext.length < 30) {
             continue;
           }
 
-          const externalUrls = this.extractExternalStartupUrls(fullText);
           const directEmail = this.extractEmailFromPlainText(fullText) || '';
+          const externalUrls = this.extractExternalStartupUrls(fullText);
 
+          // Solo conservar si ya tiene correo directo en el post o una URL de MVP para extraerlo
           if (!directEmail && externalUrls.length === 0) continue;
 
           const isEs = this.isSpanishContent(fullText);
           let projectName = title
-            .replace(/^\[.*?\]\s*/, '')
+            .replace(/^\[.*?\]\s*/g, '')
             .split(/[-–—:|]/)[0]
             .trim();
-          if (projectName.length > 44 || projectName.length < 3) {
+          if (projectName.length > 42 || projectName.length < 3) {
             projectName = externalUrls[0]
               ? new URL(externalUrls[0]).hostname.replace(/^www\./i, '').split('.')[0].toUpperCase()
-              : `Idea / MVP de u/${author}`;
+              : `Proyecto de u/${author}`;
           }
 
-          const signalQuote = selftext.replace(/\s+/g, ' ').trim().substring(0, 280);
+          const signalQuote = selftext.replace(/\s+/g, ' ').trim().substring(0, 260);
 
           if (!candidates.some(c => c.communityUrl === permalink)) {
             candidates.push({
               sourcePlatform: 'Reddit',
-              sourceDetail: `${subreddit} · ${isEs ? 'Hilo en Español' : 'Founder Post'}`,
+              sourceDetail: `${subreddit} · ${isEs ? 'Fundador Hispano' : 'Founder Thread'}`,
               projectName,
               founderName: `u/${author}`,
-              founderHandleOrRole: isEs ? `Fundador en ${subreddit}` : `Early Founder (${subreddit})`,
+              founderHandleOrRole: isEs ? `Fundador en ${subreddit}` : `Founder (${subreddit})`,
               description: `${title}. ${signalQuote}`,
               signalSnippet: `"${title} — ${signalQuote}..."`,
               communityUrl: permalink,
@@ -351,221 +339,261 @@ export class StartupRadarService {
           }
         }
       } catch (err: any) {
-        log?.(`[Reddit Ideation] Aviso: ${err.message}`);
+        log?.(`[Reddit API] Aviso: ${err.message}`);
       }
     }
 
-    return candidates.sort((a, b) => Number(b.isSpanish) - Number(a.isSpanish));
+    return candidates.sort((a, b) => {
+      if (a.isSpanish !== b.isSpanish) return Number(b.isSpanish) - Number(a.isSpanish);
+      return Number(Boolean(b.email)) - Number(Boolean(a.email));
+    });
   }
 
   /**
-   * 2. PRODUCT HUNT & INDIE MAKERS EN FASE PRE-LAUNCH / WAITLIST / BETA
-   * Filtra proyectos indie recién creados (1-2 makers, pocos votos) y descarta empresas consolidadas.
+   * FUENTE 2: GITHUB API — INDIE MAKERS, FUNDADORES Y MVPs EN ESPAÑOL (España & Latam)
+   * Usa la API oficial de GitHub (que nunca bloquea IPs cloud) para encontrar:
+   * A) Perfiles de fundadores/indie makers en España y Latinoamérica que tienen email público o proyecto activo.
+   * B) Repositorios recientes de MVPs / SaaS en español con página web activa o email de autor en los commits.
    */
-  static async fetchProductHuntIdeationMakers(
-    tags: string[],
-    maxUpvotes: number,
-    productHuntToken?: string,
-    log?: (msg: string) => void
-  ): Promise<RawStartupCandidate[]> {
-    const candidates: RawStartupCandidate[] = [];
-    const cleanTags = tags.length > 0 ? tags : ['pre-launch', 'ideation', 'mvp', 'indie'];
-
-    if (productHuntToken && productHuntToken.trim().length > 10) {
-      log?.(`[Product Hunt API] Buscando proyectos Pre-Launch / Indie Makers con menos de ${maxUpvotes} votos...`);
-      for (const topicSlug of cleanTags.slice(0, 3)) {
-        try {
-          const query = `
-            query($topic: String!) {
-              posts(first: 10, topic: $topic, order: NEWEST) {
-                edges {
-                  node {
-                    name
-                    tagline
-                    description
-                    url
-                    website
-                    votesCount
-                    makers {
-                      name
-                      headline
-                    }
-                  }
-                }
-              }
-            }
-          `;
-          const controller = new AbortController();
-          const t = setTimeout(() => controller.abort(), 6500);
-          const res = await fetch('https://api.producthunt.com/v2/api/graphql', {
-            method: 'POST',
-            signal: controller.signal,
-            headers: {
-              Authorization: `Bearer ${productHuntToken.trim()}`,
-              'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({ query, variables: { topic: topicSlug.toLowerCase().replace(/\s+/g, '-') } })
-          });
-          clearTimeout(t);
-
-          if (res.ok) {
-            const json = await res.json();
-            const edges = json?.data?.posts?.edges || [];
-            for (const edge of edges) {
-              const node = edge?.node;
-              if (!node) continue;
-              const votes = Number(node.votesCount || 0);
-              const makers = Array.isArray(node.makers) ? node.makers : [];
-              const fullText = `${node.name} ${node.tagline || ''} ${node.description || ''}`;
-
-              if (votes > maxUpvotes || makers.length > 2 || EXCLUDE_MATURE_COMPANIES_REGEX.test(fullText)) {
-                continue;
-              }
-
-              const primaryMaker = makers[0] || { name: 'Indie Maker', headline: 'Solo Founder' };
-              const isEs = this.isSpanishContent(fullText);
-
-              candidates.push({
-                sourcePlatform: 'Product Hunt',
-                sourceDetail: `Product Hunt · #${topicSlug} (${votes} upvotes)`,
-                projectName: node.name,
-                founderName: primaryMaker.name || 'Indie Maker',
-                founderHandleOrRole: primaryMaker.headline || 'Solo Maker / Pre-Seed',
-                description: `${node.tagline || ''}. ${node.description || ''}`.trim(),
-                signalSnippet: `"Lanzamiento temprano en Product Hunt (#${topicSlug}): ${node.tagline || node.description || ''}"`,
-                communityUrl: node.url || 'https://www.producthunt.com',
-                websiteUrl: node.website && !node.website.includes('producthunt.com') ? node.website : '',
-                email: '',
-                upvotesOrScore: votes,
-                makersCount: makers.length || 1,
-                tags: ['Product Hunt', `#${topicSlug}`, 'Early MVP'],
-                isSpanish: isEs
-              });
-            }
-          }
-        } catch {}
-      }
-    }
-
-    return candidates;
-  }
-
-  /**
-   * 3. LINKEDIN & ECOSISTEMA HISPANO DE PROYECTOS EN FASE DE IDEACIÓN, WAITLIST Y PRE-SEED
-   * Busca específicamente proyectos en fase beta, listas de espera, fundadores buscando CTO/socio técnico
-   * y nuevos proyectos indie en español (descartando empresas consolidadas).
-   */
-  static async fetchSpanishIdeationAndLinkedInFounders(
-    linkedinKeywords: string[],
+  static async fetchGitHubSpanishIndieFounders(
     targetGeo: string,
     log?: (msg: string) => void
   ): Promise<RawStartupCandidate[]> {
     const candidates: RawStartupCandidate[] = [];
-    log?.(`[LinkedIn & Ideación ES] Buscando fundadores en etapa semilla, listas de espera (waitlists) y proyectos beta en español...`);
+    log?.(`[GitHub Indie & MVP API] Buscando fundadores, indie makers y MVPs recientes en España y Latinoamérica...`);
 
-    const searchQueries = [
-      // 1. Fundadores en LinkedIn España / Latam buscando socio técnico, CTO o construyendo MVP en modo Stealth
-      `site:linkedin.com/in/ ("busco socio técnico" OR "buscando CTO" OR "building MVP" OR "stealth startup" OR "pre-seed founder" OR "cofundador") ("Madrid" OR "Barcelona" OR "España" OR "México" OR "Colombia")`,
-      // 2. Proyectos en fase de validación / beta abierta / lista de espera en español
-      `("lista de espera" OR "acceso anticipado" OR "beta privada" OR "estamos construyendo" OR "fase beta") ("startup" OR "SaaS" OR "IA" OR "plataforma") ("hola@" OR "contacto@") -elpais -xataka -forbes`,
-      // 3. Emprendedores hispanos presentando un MVP o buscando cofundador técnico con contacto directo
-      `("busco socio técnico" OR "busco cofundador" OR "validar idea" OR "lanzando nuestro MVP") ("@" OR "contacto") site:.es OR site:.app OR site:.io OR site:.ai`
+    const headers: Record<string, string> = {
+      'User-Agent': 'Hormesis-Startup-Radar-App',
+      Accept: 'application/vnd.github+json'
+    };
+
+    try {
+      // A) Buscar repositorios creados recientemente en español de tipo SaaS / MVP / Startup con homepage activa
+      const repoQueries = [
+        'mvp OR saas OR startup OR "lista de espera" OR "inteligencia artificial" language:TypeScript',
+        'startup OR saas OR mvp OR "proyecto" in:description,readme'
+      ];
+
+      for (const rq of repoQueries.slice(0, 1)) {
+        const repoUrl = `https://api.github.com/search/repositories?q=${encodeURIComponent(rq)}&sort=updated&order=desc&per_page=15`;
+        const controller = new AbortController();
+        const t = setTimeout(() => controller.abort(), 6500);
+        const res = await fetch(repoUrl, { signal: controller.signal, headers });
+        clearTimeout(t);
+
+        if (res.ok) {
+          const data = await res.json();
+          const items = data?.items || [];
+          for (const repo of items) {
+            if (candidates.length >= 10) break;
+            const homepage = (repo.homepage || '').trim();
+            const desc = repo.description || '';
+            const ownerLogin = repo.owner?.login || 'maker';
+            const stars = Number(repo.stargazers_count || 0);
+
+            // Descartar proyectos masivos o sin descripción
+            if (stars > 150 || !desc) continue;
+            const isEs = this.isSpanishContent(`${repo.name} ${desc}`);
+            if (!isEs && (!homepage || !homepage.startsWith('http'))) continue;
+
+            // Intentar obtener el email público del autor en sus eventos recientes de GitHub
+            let authorEmail = this.extractEmailFromPlainText(desc) || '';
+            if (!authorEmail) {
+              try {
+                const evRes = await fetch(`https://api.github.com/users/${ownerLogin}/events/public?per_page=10`, {
+                  headers
+                });
+                if (evRes.ok) {
+                  const events = await evRes.json();
+                  for (const ev of events || []) {
+                    const commits = ev?.payload?.commits || [];
+                    for (const cm of commits) {
+                      const em = cm?.author?.email || '';
+                      if (
+                        em &&
+                        em.includes('@') &&
+                        !em.includes('noreply.github.com') &&
+                        !em.includes('example.com')
+                      ) {
+                        authorEmail = em.toLowerCase().trim();
+                        break;
+                      }
+                    }
+                    if (authorEmail) break;
+                  }
+                }
+              } catch {}
+            }
+
+            if (!authorEmail && (!homepage || !homepage.startsWith('http'))) continue;
+
+            candidates.push({
+              sourcePlatform: 'GitHub Indie / MVP',
+              sourceDetail: `GitHub MVP · ${isEs ? 'Proyecto en Español' : 'Early Builder'} (${stars} ⭐)`,
+              projectName: repo.name.replace(/[-_]/g, ' ').replace(/\b\w/g, (l: string) => l.toUpperCase()),
+              founderName: ownerLogin,
+              founderHandleOrRole: `Indie Builder / Autor (@${ownerLogin})`,
+              description: desc,
+              signalSnippet: `"Construyendo MVP público (${repo.name}): ${desc}"`,
+              communityUrl: repo.html_url,
+              websiteUrl: homepage && homepage.startsWith('http') ? homepage : '',
+              email: authorEmail,
+              upvotesOrScore: stars,
+              makersCount: 1,
+              tags: ['MVP en Desarrollo', isEs ? 'Español' : 'Indie', 'Builder'],
+              isSpanish: isEs
+            });
+          }
+        }
+      }
+
+      // B) Buscar usuarios/fundadores en España y Latam que declaran "founder", "startup", "indie", "SaaS" en su bio
+      const userSearchUrl = `https://api.github.com/search/users?q=${encodeURIComponent(
+        '(founder OR cofounder OR startup OR saas OR indie OR creador) (location:Spain OR location:Madrid OR location:Barcelona OR location:Mexico OR location:Colombia OR location:Argentina)'
+      )}&sort=joined&order=desc&per_page=12`;
+
+      const uRes = await fetch(userSearchUrl, { headers });
+      if (uRes.ok) {
+        const uData = await uRes.json();
+        const users = (uData?.items || []).slice(0, 8);
+
+        for (const u of users) {
+          if (candidates.length >= 16) break;
+          try {
+            const profRes = await fetch(`https://api.github.com/users/${u.login}`, { headers });
+            if (!profRes.ok) continue;
+            const prof = await profRes.json();
+
+            let founderEmail = prof.email || this.extractEmailFromPlainText(prof.bio || '') || '';
+            const blogUrl =
+              prof.blog && prof.blog.startsWith('http')
+                ? prof.blog
+                : prof.blog
+                ? `https://${prof.blog}`
+                : '';
+
+            // Si no tiene email en el perfil, buscar en sus commits públicos
+            if (!founderEmail) {
+              const evRes = await fetch(`https://api.github.com/users/${u.login}/events/public?per_page=8`, {
+                headers
+              });
+              if (evRes.ok) {
+                const events = await evRes.json();
+                for (const ev of events || []) {
+                  for (const cm of ev?.payload?.commits || []) {
+                    const em = cm?.author?.email || '';
+                    if (em && em.includes('@') && !em.includes('noreply.github.com')) {
+                      founderEmail = em.toLowerCase().trim();
+                      break;
+                    }
+                  }
+                  if (founderEmail) break;
+                }
+              }
+            }
+
+            if (!founderEmail && !blogUrl) continue;
+
+            const founderName = prof.name || u.login;
+            const companyOrProj =
+              (prof.company || '').replace(/^@/, '').trim() ||
+              (blogUrl ? new URL(blogUrl).hostname.replace(/^www\./i, '').split('.')[0].toUpperCase() : `Proyecto de ${founderName}`);
+
+            candidates.push({
+              sourcePlatform: 'GitHub Indie / MVP',
+              sourceDetail: `Founder en ${prof.location || 'España / Latam'}`,
+              projectName: companyOrProj,
+              founderName,
+              founderHandleOrRole: prof.bio ? prof.bio.substring(0, 55) : 'Indie Founder & Developer',
+              description: prof.bio || `Fundador técnico / Indie Maker en ${prof.location || 'España'} construyendo ${companyOrProj}.`,
+              signalSnippet: `"Bio del Fundador (${prof.location || 'Hispano'}): ${prof.bio || companyOrProj}"`,
+              communityUrl: prof.html_url,
+              websiteUrl: blogUrl,
+              email: founderEmail,
+              upvotesOrScore: Number(prof.public_repos || 5),
+              makersCount: 1,
+              tags: ['Español', prof.location || 'Hispano', 'Founder'],
+              isSpanish: true
+            });
+          } catch {}
+        }
+      }
+    } catch (err: any) {
+      log?.(`[GitHub Indie API] Aviso: ${err.message}`);
+    }
+
+    return candidates;
+  }
+
+  /**
+   * FUENTE 3: SHOW HN / ALGOLIA STARTUP API (Lanzamientos tempranos con email de fundador directo)
+   * Consulta la API JSON oficial de Hacker News Algolia buscando presentaciones "Show HN" y "Ask HN"
+   * de fundadores en etapa temprana que dejan su correo electrónico directo para feedback o socios.
+   */
+  static async fetchShowHNAndEarlyBuilders(log?: (msg: string) => void): Promise<RawStartupCandidate[]> {
+    const candidates: RawStartupCandidate[] = [];
+    log?.(`[Show HN & Builders API] Buscando presentaciones tempranas de fundadores con correo directo...`);
+
+    const queries = [
+      'https://hn.algolia.com/api/v1/search_by_date?query=' +
+        encodeURIComponent('"@gmail.com" OR "hello@" OR "hola@" OR "founder@"') +
+        '&tags=show_hn&hitsPerPage=20',
+      'https://hn.algolia.com/api/v1/search_by_date?query=' +
+        encodeURIComponent('cofounder OR "socio" OR "early beta" OR "feedback" "@gmail.com"') +
+        '&tags=story&hitsPerPage=15'
     ];
 
-    for (const q of searchQueries) {
-      if (candidates.length >= 14) break;
+    for (const qUrl of queries) {
+      if (candidates.length >= 12) break;
       try {
         const controller = new AbortController();
         const t = setTimeout(() => controller.abort(), 6500);
-        const searchUrl = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(q)}&kl=es-es`;
-        const res = await fetch(searchUrl, {
-          signal: controller.signal,
-          headers: {
-            'User-Agent':
-              'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-            'Accept-Language': 'es-ES,es;q=0.9',
-            Accept: 'text/html'
-          }
-        });
+        const res = await fetch(qUrl, { signal: controller.signal });
         clearTimeout(t);
 
         if (!res.ok) continue;
-        const html = await res.text();
-        const resultBlocks = html.split(/class=["']result__body["']/i).slice(1, 10);
+        const data = await res.json();
+        const hits = data?.hits || [];
 
-        for (const block of resultBlocks) {
-          const titleRaw = block.match(/class=["']result__a["'][^>]*>([\s\S]*?)<\/a>/i)?.[1] || '';
-          const snippetRaw =
-            block.match(/class=["']result__snippet["'][^>]*>([\s\S]*?)<\/a>/i)?.[1] ||
-            block.match(/class=["']result__snippet["'][^>]*>([\s\S]*?)<\/div>/i)?.[1] ||
-            '';
-          const urlMatch = block.match(/uddg=([^"&]+)/i);
+        for (const hit of hits) {
+          const title: string = hit.title || '';
+          const storyText: string = (hit.story_text || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+          const author: string = hit.author || 'founder';
+          const points = Number(hit.points || 1);
+          const url: string = hit.url || '';
+          const hnLink = `https://news.ycombinator.com/item?id=${hit.objectID}`;
 
-          const cleanTitle = titleRaw.replace(/<[^>]+>/g, '').replace(/&amp;/g, '&').trim();
-          const cleanSnippet = snippetRaw
-            .replace(/<[^>]+>/g, '')
-            .replace(/&amp;/g, '&')
-            .replace(/\s+/g, ' ')
-            .trim();
-          const decodedUrl = urlMatch ? decodeURIComponent(urlMatch[1]) : '';
+          const combined = `${title} ${storyText}`;
+          if (points > 120 || EXCLUDE_MATURE_COMPANIES_REGEX.test(combined)) continue;
 
-          if (!cleanTitle || !decodedUrl.startsWith('http')) continue;
-          if (EXCLUDE_MATURE_COMPANIES_REGEX.test(`${cleanTitle} ${cleanSnippet} ${decodedUrl}`)) continue;
+          const directEmail = this.extractEmailFromPlainText(combined) || '';
+          if (!directEmail && !url) continue;
 
-          const emailInSnippet = this.extractEmailFromPlainText(`${cleanTitle} ${cleanSnippet}`) || '';
-          const isLinkedIn = decodedUrl.includes('linkedin.com/in/');
+          const cleanTitle = title.replace(/^Show HN:\s*/i, '').replace(/^Ask HN:\s*/i, '').trim();
+          const projectName = cleanTitle.split(/[-–—:|()]/)[0]?.trim() || `MVP de ${author}`;
+          const isEs = this.isSpanishContent(combined);
 
-          if (isLinkedIn) {
-            const titleParts = cleanTitle.replace(/\s*\|\s*LinkedIn.*$/i, '').split(/\s+[-–—]\s+/);
-            const founderName = titleParts[0]?.trim() || 'Fundador';
-            const roleOrHeadline = titleParts.slice(1).join(' · ').trim() || 'Fundador en Fase Semilla';
-            const extUrls = this.extractExternalStartupUrls(cleanSnippet);
-
-            if (!emailInSnippet && extUrls.length === 0) continue;
-
+          if (!candidates.some(c => c.communityUrl === hnLink)) {
             candidates.push({
-              sourcePlatform: 'LinkedIn',
-              sourceDetail: 'LinkedIn · Fundador en Etapa Semilla',
-              projectName: titleParts[2]?.trim() || `Proyecto Stealth (${founderName})`,
-              founderName,
-              founderHandleOrRole: roleOrHeadline,
-              description: cleanSnippet,
-              signalSnippet: `"Perfil Fundador Semilla: ${roleOrHeadline} — ${cleanSnippet}"`,
-              communityUrl: decodedUrl,
-              websiteUrl: extUrls[0] || '',
-              email: emailInSnippet,
-              upvotesOrScore: 8,
+              sourcePlatform: 'Show HN / Builders',
+              sourceDetail: `Show HN · Early Launch (${points} pts)`,
+              projectName: projectName.substring(0, 42),
+              founderName: author,
+              founderHandleOrRole: 'Early-Stage Founder (Show HN)',
+              description: `${cleanTitle}. ${storyText.substring(0, 260)}`,
+              signalSnippet: `"${title} — ${storyText.substring(0, 220) || cleanTitle}"`,
+              communityUrl: hnLink,
+              websiteUrl: url,
+              email: directEmail,
+              upvotesOrScore: points,
               makersCount: 1,
-              tags: ['Español', 'LinkedIn Seed', 'Stealth / MVP'],
-              isSpanish: true
-            });
-          } else if (!EXCLUDED_PLATFORM_DOMAINS.test(decodedUrl)) {
-            const urlObj = new URL(decodedUrl);
-            const domainName = urlObj.hostname.replace(/^www\./i, '');
-            const projectName = cleanTitle.split(/[-–—|•:]/)[0]?.trim() || domainName;
-
-            candidates.push({
-              sourcePlatform: decodedUrl.includes('.ai') || decodedUrl.includes('.app') || decodedUrl.includes('.io')
-                ? 'Product Hunt'
-                : 'LinkedIn',
-              sourceDetail: 'Waitlist / MVP Temprano en Español',
-              projectName: projectName.substring(0, 38),
-              founderName: `Fundador de ${projectName.substring(0, 22)}`,
-              founderHandleOrRole: 'Indie Maker / Pre-Seed Founder',
-              description: cleanSnippet,
-              signalSnippet: `"${cleanTitle}: ${cleanSnippet}"`,
-              communityUrl: decodedUrl,
-              websiteUrl: `${urlObj.protocol}//${urlObj.hostname}`,
-              email: emailInSnippet,
-              upvotesOrScore: 11,
-              makersCount: 1,
-              tags: ['Español', 'Beta / Waitlist', 'MVP'],
-              isSpanish: true
+              tags: ['Show HN', 'Early MVP', isEs ? 'Español' : 'Founder'],
+              isSpanish: isEs
             });
           }
         }
       } catch (err: any) {
-        log?.(`[LinkedIn & Ideación ES] Aviso: ${err.message}`);
+        log?.(`[Show HN API] Aviso: ${err.message}`);
       }
     }
 
@@ -573,99 +601,7 @@ export class StartupRadarService {
   }
 
   /**
-   * 4. CAZADOR DE PROYECTOS INDIE Y MICRO-SAAS EN FASE BETA / IDEACIÓN EN ESPAÑOL
-   * Busca proyectos hispanos pequeños/emergentes (herramientas IA, micro-SaaS, apps en beta)
-   * verificando que su landing esté activa, que NO sea una empresa grande y que tenga email verificable.
-   */
-  static async huntEmergingSpanishIndieProjects(
-    config: StartupRadarConfig,
-    groqApiKey: string,
-    neededCount: number,
-    existingUrls: Set<string>,
-    log?: (msg: string) => void
-  ): Promise<RawStartupCandidate[]> {
-    if (!groqApiKey || neededCount <= 0) return [];
-    log?.(`[Radar Ideación ES] Localizando ${neededCount} proyectos indie y micro-startups en español en etapa temprana...`);
-
-    const verifiedCandidates: RawStartupCandidate[] = [];
-
-    // Búsqueda dirigida a micro-proyectos, betas y herramientas emergentes en español
-    const indieDorks = [
-      `"creado por" ("beta" OR "acceso anticipado" OR "próximamente" OR "lista de espera" OR "MVP") site:.es OR site:.app`,
-      `"hecho con" ("feedback" OR "beta" OR "lanzamiento" OR "proyecto") "hola@" site:.es OR site:.io`
-    ];
-
-    for (const dork of indieDorks) {
-      if (verifiedCandidates.length >= neededCount) break;
-      try {
-        const controller = new AbortController();
-        const t = setTimeout(() => controller.abort(), 6000);
-        const res = await fetch(`https://html.duckduckgo.com/html/?q=${encodeURIComponent(dork)}&kl=es-es`, {
-          signal: controller.signal,
-          headers: {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-            'Accept-Language': 'es-ES,es;q=0.9'
-          }
-        });
-        clearTimeout(t);
-        if (!res.ok) continue;
-
-        const html = await res.text();
-        const blocks = html.split(/class=["']result__body["']/i).slice(1, 10);
-        for (const block of blocks) {
-          if (verifiedCandidates.length >= neededCount) break;
-          const titleRaw = block.match(/class=["']result__a["'][^>]*>([\s\S]*?)<\/a>/i)?.[1] || '';
-          const snippetRaw =
-            block.match(/class=["']result__snippet["'][^>]*>([\s\S]*?)<\/a>/i)?.[1] ||
-            block.match(/class=["']result__snippet["'][^>]*>([\s\S]*?)<\/div>/i)?.[1] ||
-            '';
-          const urlMatch = block.match(/uddg=([^"&]+)/i);
-          const decodedUrl = urlMatch ? decodeURIComponent(urlMatch[1]) : '';
-          if (!decodedUrl.startsWith('http')) continue;
-
-          const urlObj = new URL(decodedUrl);
-          const origin = `${urlObj.protocol}//${urlObj.hostname}`;
-          if (existingUrls.has(origin) || EXCLUDED_PLATFORM_DOMAINS.test(urlObj.hostname)) continue;
-
-          const cleanTitle = titleRaw.replace(/<[^>]+>/g, '').trim();
-          const cleanSnippet = snippetRaw.replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim();
-          if (EXCLUDE_MATURE_COMPANIES_REGEX.test(`${cleanTitle} ${cleanSnippet} ${origin}`)) continue;
-
-          const check = await this.inspectEarlyProjectLanding(origin);
-          if (check.email && !check.isMatureCompany) {
-            existingUrls.add(origin);
-            const projName = (cleanTitle.split(/[-–—|•:]/)[0] || urlObj.hostname).trim().substring(0, 36);
-            verifiedCandidates.push({
-              sourcePlatform: 'Product Hunt',
-              sourceDetail: 'Indie Maker / Proyecto Beta (ES)',
-              projectName: projName,
-              founderName: `Maker de ${projName}`,
-              founderHandleOrRole: 'Fundador Indie / Pre-Seed',
-              description: check.description || cleanSnippet,
-              signalSnippet: `"${cleanTitle} — ${cleanSnippet}"`,
-              communityUrl: decodedUrl,
-              websiteUrl: origin,
-              email: check.email,
-              upvotesOrScore: 9,
-              makersCount: 1,
-              tags: ['Español', 'Fase Beta / MVP', 'Indie Maker'],
-              isSpanish: true
-            });
-            log?.(`✅ Proyecto emergente en español detectado: ${projName} (${check.email})`);
-          }
-        }
-      } catch {}
-    }
-
-    return verifiedCandidates;
-  }
-
-  /**
-   * 5. FILTRADO ESTRICTO DE FASE DE IDEACIÓN / SEMILLA CON IA (GROQ)
-   * - Descarta implacablemente empresas ya consolidadas o con desarrollo avanzado.
-   * - Exige correo electrónico verificable.
-   * - Genera la Ficha de Inteligencia de Startup (Etapa, Necesidad Técnica Primaria, Stack Recomendado,
-   *   Dolores de Ideación y Pitch de Fundador a Fundador en Español).
+   * FILTRADO ACTIVO CON IA (GROQ), EXTRACCIÓN DE CORREO OBLIGATORIA Y PRIORIZACIÓN DE ESPAÑOL
    */
   static async qualifyAndFilterWithAI(
     candidates: RawStartupCandidate[],
@@ -675,45 +611,60 @@ export class StartupRadarService {
     log?: (msg: string) => void
   ): Promise<QualifiedStartupLead[]> {
     const qualified: QualifiedStartupLead[] = [];
+    const seenEmails = new Set<string>();
     const senderCompany = config.businessName || 'Grupo Hormesis';
     const senderContext =
       config.businessContext ||
       'Somos un Venture Studio y socio tecnológico que ayuda a fundadores en fase de ideación y pre-seed a construir su MVP funcional en semanas, diseñar la arquitectura IA y validar el producto.';
 
+    // Priorizar candidatos en español y aquellos que ya tienen email extraído directamente
     const sortedCandidates = [...candidates].sort((a, b) => {
-      if (a.isSpanish !== b.isSpanish) return Number(b.isSpanish) - Number(a.isSpanish);
-      if (Boolean(a.email) !== Boolean(b.email)) return Number(Boolean(b.email)) - Number(Boolean(b.email));
-      return 0;
+      const aHasEmail = Boolean(a.email && a.email.includes('@'));
+      const bHasEmail = Boolean(b.email && b.email.includes('@'));
+      if (a.isSpanish !== b.isSpanish && aHasEmail === bHasEmail) {
+        return Number(b.isSpanish) - Number(a.isSpanish);
+      }
+      if (aHasEmail !== bHasEmail) {
+        return Number(bHasEmail) - Number(aHasEmail);
+      }
+      return Number(b.isSpanish) - Number(a.isSpanish);
     });
 
     for (const candidate of sortedCandidates) {
       if (qualified.length >= targetCount) break;
 
-      // 1. Inspeccionar landing si tiene websiteUrl para extraer email y descartar empresas maduras
-      if (candidate.websiteUrl && candidate.websiteUrl.startsWith('http')) {
+      // 1. Si no tiene email directo pero tiene websiteUrl externa, raspar su landing para obtener el correo
+      if (!candidate.email && candidate.websiteUrl && candidate.websiteUrl.startsWith('http')) {
         const inspection = await this.inspectEarlyProjectLanding(candidate.websiteUrl);
         if (inspection.isMatureCompany) {
-          log?.(`🚫 Descartado "${candidate.projectName}": detectado como empresa ya consolidada.`);
           continue;
         }
-        if (!candidate.email && inspection.email) {
+        if (inspection.email) {
           candidate.email = inspection.email;
           candidate.websiteUrl = inspection.finalUrl || candidate.websiteUrl;
         }
         if (inspection.isSpanish) candidate.isSpanish = true;
       }
 
-      // 2. Exigir correo electrónico válido y entregable
+      // 2. Exigir correo electrónico real y no repetido
       if (!candidate.email || !candidate.email.includes('@')) {
         continue;
       }
 
-      const emailCheck = await EmailValidatorService.validateEmail(candidate.email);
+      const cleanEmail = candidate.email.toLowerCase().trim();
+      if (seenEmails.has(cleanEmail)) continue;
+
+      const emailCheck = await EmailValidatorService.validateEmail(cleanEmail);
       if (!emailCheck.isValid) {
+        log?.(`⏭️ Omitiendo correo no entregable (${cleanEmail}): ${emailCheck.reason}`);
         continue;
       }
 
-      // 3. Evaluación profunda de Fase de Ideación con Groq AI
+      seenEmails.add(cleanEmail);
+      candidate.email = cleanEmail;
+      log?.(`📧 Lead de startup en ideación verificado: ${candidate.projectName} (${candidate.founderName}) -> ${cleanEmail}`);
+
+      // 3. Evaluación y armado de Ficha de Inteligencia en ESPAÑOL con Groq AI
       let aiEvaluation: any = null;
       if (groqApiKey) {
         try {
@@ -723,42 +674,42 @@ Datos del proyecto detectado en ${candidate.sourcePlatform} (${candidate.sourceD
 - Fundador / Autor: "${candidate.founderName}" (${candidate.founderHandleOrRole})
 - Señal / Extracto original: ${candidate.signalSnippet || candidate.description}
 - Web / Comunidad: ${candidate.websiteUrl || candidate.communityUrl}
-- Email de contacto: ${candidate.email}
+- Email de contacto verificado: ${candidate.email}
 
 Nuestra empresa ("${senderCompany}"): "${senderContext}"
 
-REGLAS ESTRICTAS DE FILTRADO DE IDEACIÓN:
-1. Evalúa si este proyecto es una empresa grande/consolidada con producto maduro ("isAdvancedDevelopment": true/false). Si ya es una empresa famosa o consolidada (Series A+, banco, gran corporación), pon "isAdvancedDevelopment": true para descartarla.
+INSTRUCCIONES (TRADUCE Y REDACTA TODO EL ANÁLISIS EN ESPAÑOL):
+1. Si el título o descripción del proyecto está en inglés, traduce/adapta la explicación y la señal al español para que el equipo comercial en España la lea cómodamente.
 2. Clasifica su fase exacta ("startupStage") eligiendo UNA de estas 4:
    - "💡 Fase de Ideación"
    - "🤝 Buscando Socio Técnico"
    - "🧪 Validación / Waitlist"
    - "🛠️ MVP Temprano"
-3. Determina cuál es su Necesidad Técnica Primaria ("primaryTechnicalNeed") en español (ej: "Construcción de MVP Full-Stack desde cero", "Socio Técnico / CTO Fraccional", "Arquitectura de IA & Automatización", "Escalado de Prototipo Beta").
-4. Recomienda el Stack Tecnológico ideal ("recommendedStack") para su caso (ej: "Next.js + Node.js + PostgreSQL + OpenAI/Groq").
+3. Determina su Necesidad Técnica Primaria ("primaryTechnicalNeed") en español (ej: "Construcción de MVP Full-Stack & Escalado", "Socio Técnico / Ingeniería de Producto", "Arquitectura de IA & Automatización").
+4. Recomienda el Stack Tecnológico ideal ("recommendedStack") para su caso.
 5. Extrae 3 cuellos de botella o dolores técnicos concretos de su etapa ("painPoints") en español.
-6. Calcula un "qualificationScore" (82 a 98) según el encaje para ofrecerle desarrollo de MVP o alianza técnica.
-7. Redacta en español un "aiSubjectLine" (asunto cercano de fundador a fundador, sin sonar a spam corporativo) y un "aiCustomPitch" (2 párrafos cortos y directos comentando su publicación/idea en ${candidate.sourcePlatform} y proponiendo una charla de 15 min para ayudarle con la parte técnica/MVP).
+6. Calcula un "qualificationScore" (85 a 98).
+7. Redacta en español un "aiSubjectLine" (asunto cercano de fundador a fundador) y un "aiCustomPitch" (2 párrafos cortos y directos comentando su publicación/proyecto "${candidate.projectName}" en ${candidate.sourcePlatform} y proponiendo una charla de 15 min para apoyarle como socio tecnológico).
 
 Devuelve ÚNICAMENTE un JSON válido:
 {
-  "isIdeationOrEarlyStage": true,
-  "isAdvancedDevelopment": false,
-  "startupStage": "🧪 Validación / Waitlist",
+  "projectNameEs": "Nombre claro del proyecto",
+  "signalSnippetEs": "Resumen claro en español de lo que está construyendo o buscando el fundador",
+  "startupStage": "🤝 Buscando Socio Técnico",
   "primaryTechnicalNeed": "Desarrollo de MVP Funcional & Arquitectura Escalable",
-  "recommendedStack": "Next.js + TypeScript + Node.js + Supabase/PostgreSQL",
+  "recommendedStack": "Next.js + TypeScript + Node.js + PostgreSQL + IA",
   "painPoints": [
-    "Necesidad de transformar la idea/waitlist en un MVP funcional rápido para validar tracción",
-    "Falta de brazo técnico dedicado para iterar el producto sin acumular deuda técnica",
-    "Integración de flujos automatizados e IA listos para los primeros usuarios"
+    "Necesidad de acelerar el desarrollo del MVP sin desviar recursos en infraestructura compleja",
+    "Contar con un socio tecnológico que aporte velocidad de iteración y calidad de código",
+    "Escalabilidad técnica para convertir a los primeros usuarios en clientes recurrentes"
   ],
-  "qualificationScore": 94,
-  "aiSubjectLine": "Sobre tu proyecto ${candidate.projectName} — apoyo técnico / MVP",
-  "aiCustomPitch": "Hola ${candidate.founderName}, vi tu proyecto ${candidate.projectName} en ${candidate.sourcePlatform}..."
+  "qualificationScore": 93,
+  "aiSubjectLine": "Sobre tu proyecto ${candidate.projectName} — apoyo técnico y MVP",
+  "aiCustomPitch": "Hola ${candidate.founderName}, vi lo que estás construyendo con ${candidate.projectName}..."
 }`;
 
           const controller = new AbortController();
-          const t = setTimeout(() => controller.abort(), 10000);
+          const t = setTimeout(() => controller.abort(), 9000);
           const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
             method: 'POST',
             signal: controller.signal,
@@ -772,12 +723,12 @@ Devuelve ÚNICAMENTE un JSON válido:
               messages: [
                 {
                   role: 'system',
-                  content: 'Eres un evaluador de startups en etapa pre-seed e ideación. Responde solo con JSON válido en español.'
+                  content: 'Eres un evaluador de startups en etapa pre-seed e ideación. Responde siempre en español y solo con JSON válido.'
                 },
                 { role: 'user', content: prompt }
               ],
               temperature: 0.4,
-              max_tokens: 950
+              max_tokens: 900
             })
           });
           clearTimeout(t);
@@ -791,38 +742,35 @@ Devuelve ÚNICAMENTE un JSON válido:
             }
           }
         } catch (err: any) {
-          log?.(`[Evaluador Ideación IA] Aviso en ${candidate.projectName}: ${err.message}`);
+          log?.(`[Evaluador IA] Aviso en ${candidate.projectName}: ${err.message}`);
         }
-      }
-
-      if (aiEvaluation?.isAdvancedDevelopment === true) {
-        log?.(`🚫 Descartado por IA (producto ya avanzado/maduro): "${candidate.projectName}"`);
-        continue;
       }
 
       qualified.push({
         ...candidate,
+        projectName: aiEvaluation?.projectNameEs || candidate.projectName,
+        signalSnippet: aiEvaluation?.signalSnippetEs || candidate.signalSnippet,
         isIdeationOrEarlyStage: true,
         isAdvancedDevelopment: false,
-        startupStage: aiEvaluation?.startupStage || '🧪 Validación / Waitlist',
+        startupStage: aiEvaluation?.startupStage || (candidate.isSpanish ? '🤝 Buscando Socio Técnico' : '🛠️ MVP Temprano'),
         primaryTechnicalNeed:
           aiEvaluation?.primaryTechnicalNeed || 'Socio Técnico & Construcción de MVP Escalable',
         recommendedStack:
-          aiEvaluation?.recommendedStack || 'React / Next.js + Node.js + PostgreSQL + IA',
+          aiEvaluation?.recommendedStack || 'Next.js + Node.js + PostgreSQL + IA',
         painPoints:
           Array.isArray(aiEvaluation?.painPoints) && aiEvaluation.painPoints.length > 0
             ? aiEvaluation.painPoints
             : [
-                'Pasar de fase de validación a un MVP funcional en semanas sin desviar el presupuesto',
-                'Contar con arquitectura escalable y soporte de ingeniería senior desde el día 1'
+                'Acelerar el paso de prototipo/idea a producto comercializable sin deuda técnica',
+                'Contar con brazo de ingeniería full-stack e IA para iterar con los primeros usuarios'
               ],
         qualificationScore: Number(aiEvaluation?.qualificationScore || 92),
         aiSubjectLine:
           aiEvaluation?.aiSubjectLine ||
-          `Sobre ${candidate.projectName} en ${candidate.sourcePlatform} · Socio Técnico / MVP`,
+          `Sobre ${candidate.projectName} · Socio Tecnológico & Desarrollo MVP`,
         aiCustomPitch:
           aiEvaluation?.aiCustomPitch ||
-          `Hola ${candidate.founderName}, vi lo que estás impulsando con ${candidate.projectName} (${candidate.sourceDetail}). En ${senderCompany} nos involucramos con fundadores en fase de ideación y validación como brazo tecnológico para construir y lanzar el MVP en tiempo récord.`
+          `Hola ${candidate.founderName}, estuvimos revisando lo que estás construyendo con ${candidate.projectName} (${candidate.sourceDetail}). En ${senderCompany} acompañamos a fundadores en etapa de ideación y MVP como socio tecnológico para lanzar y escalar el producto en semanas.`
       });
     }
 

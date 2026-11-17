@@ -8,14 +8,14 @@ export const workflowController = {
   // --- TEMPLATES ---
   async getTemplates(req: Request, res: Response) {
     try {
-      // 1. Plantilla: Recolector de Startups en Ideación (Product Hunt + Reddit + LinkedIn)
+      // 1. Plantilla: Recolector de Startups en Ideación (Reddit + GitHub Indie/MVP + Show HN)
       await prisma.workflowTemplate
         .upsert({
           where: { typeIdentifier: 'startup_ideation_radar' },
           update: {
-            name: '🚀 Recolector de Startups en Ideación (PH + Reddit + LinkedIn)',
+            name: '🚀 Recolector de Startups en Ideación (Reddit + Indie/MVP ES)',
             description:
-              'Pipeline en Node.js que integra Product Hunt, Reddit y LinkedIn para detectar fundadores en etapa semilla/ideación, filtrando productos con desarrollo avanzado y extrayendo necesidades técnicas primarias al CRM.',
+              'Pipeline en Node.js que monitorea Reddit (cofounder/startups/emprendedores), GitHub Indie/MVPs en Español y Show HN para extraer fundadores en etapa semilla/ideación con correo verificado.',
             requiredCreds: ['groq_api_key'],
             configSchema: {
               properties: {}
@@ -23,9 +23,9 @@ export const workflowController = {
           },
           create: {
             typeIdentifier: 'startup_ideation_radar',
-            name: '🚀 Recolector de Startups en Ideación (PH + Reddit + LinkedIn)',
+            name: '🚀 Recolector de Startups en Ideación (Reddit + Indie/MVP ES)',
             description:
-              'Pipeline en Node.js que integra Product Hunt, Reddit y LinkedIn para detectar fundadores en etapa semilla/ideación, filtrando productos con desarrollo avanzado y extrayendo necesidades técnicas primarias al CRM.',
+              'Pipeline en Node.js que monitorea Reddit (cofounder/startups/emprendedores), GitHub Indie/MVPs en Español y Show HN para extraer fundadores en etapa semilla/ideación con correo verificado.',
             requiredCreds: ['groq_api_key'],
             configSchema: {
               properties: {}
