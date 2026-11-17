@@ -3008,36 +3008,7 @@ class StartupIdeationRadarWorkflow extends BaseWorkflowType {
 
     const batchLimit = Math.min(Math.max(Number(config.batchLimit || 6), 1), 15);
 
-    // 1. Recolectar candidatos en fase de ideación desde fuentes JSON con correo verificable (sin Product Hunt)
-    const [redditCandidates, ghSpanishCandidates, showHnCandidates] = await Promise.all([
-      StartupRadarService.fetchRedditIdeationFounders(subreddits, valKeywords, context.log),
-      StartupRadarService.fetchGitHubSpanishIndieFounders(
-        config.targetGeoOrLanguage || 'Spain OR Latam',
-        context.log
-      ),
-      StartupRadarService.fetchShowHNAndEarlyBuilders(context.log)
-    ]);
-
-    const allFetched = [...ghSpanishCandidates, ...redditCandidates, ...showHnCandidates];
-    const spanishFirst = allFetched.sort((a, b) => Number(b.isSpanish) - Number(a.isSpanish));
-
-    context.log(
-      `📊 Señales de ideación detectadas: Reddit (${redditCandidates.length}), GitHub Indie ES/Latam (${ghSpanishCandidates.length}), Show HN (${showHnCandidates.length}).`
-    );
-
-    context.log(`🧠 Verificando correos de fundadores, descartando empresas maduras y armando Ficha de Ideación con Groq AI...`);
-
-    const qualifiedLeads = await StartupRadarService.qualifyAndFilterWithAI(
-      spanishFirst,
-      config,
-      groqKey,
-      batchLimit,
-      context.log
-    );
-
-    context.log(`✅ ${qualifiedLeads.length} proyectos en fase de ideación/semilla con correo verificado listos.`);
-
-    // 2. Resolver proyecto destino para guardar los leads en el CRM
+    // Resolver proyecto destino y cargar leads ya existentes para NO repetir nunca el mismo lead
     let targetProjectId = context.workflow.projectId;
     if (!targetProjectId) {
       const firstProj = await prisma.project.findFirst({
@@ -3046,6 +3017,48 @@ class StartupIdeationRadarWorkflow extends BaseWorkflowType {
       });
       targetProjectId = firstProj?.id || null;
     }
+
+    const existingEmails = new Set<string>();
+    const existingUrls = new Set<string>();
+    if (targetProjectId) {
+      const prevLeads = await prisma.lead.findMany({
+        where: { projectId: targetProjectId },
+        select: { email: true, website: true, metadata: true }
+      });
+      for (const pl of prevLeads) {
+        if (pl.email) existingEmails.add(pl.email.toLowerCase().trim());
+        if (pl.website) existingUrls.add(pl.website.trim());
+        const m = typeof pl.metadata === 'object' && pl.metadata ? (pl.metadata as any) : {};
+        if (m.communityUrl) existingUrls.add(String(m.communityUrl).trim());
+      }
+    }
+
+    // 1. Recolectar candidatos en fase de ideación desde APIs JSON compatibles con servidores Cloud (sin Product Hunt)
+    const [redditCandidates, ghSpanishCandidates, showHnCandidates] = await Promise.all([
+      StartupRadarService.fetchRedditIdeationFounders(subreddits, valKeywords, existingEmails, existingUrls, context.log),
+      StartupRadarService.fetchGitHubSpanishIndieFounders(existingEmails, existingUrls, context.log),
+      StartupRadarService.fetchShowHNAndEarlyBuilders(existingEmails, existingUrls, context.log)
+    ]);
+
+    const allFetched = [...ghSpanishCandidates, ...redditCandidates, ...showHnCandidates];
+    const spanishFirst = allFetched.sort((a, b) => Number(b.isSpanish) - Number(a.isSpanish));
+
+    context.log(
+      `📊 Señales nuevas detectadas: Reddit (${redditCandidates.length}), GitHub Indie/MVP (${ghSpanishCandidates.length}), Show HN (${showHnCandidates.length}).`
+    );
+
+    context.log(`🧠 Verificando correos de fundadores, descartando duplicados/empresas maduras y armando Ficha de Ideación con Groq AI...`);
+
+    const qualifiedLeads = await StartupRadarService.qualifyAndFilterWithAI(
+      spanishFirst,
+      config,
+      groqKey,
+      batchLimit,
+      existingEmails,
+      context.log
+    );
+
+    context.log(`✅ ${qualifiedLeads.length} proyectos nuevos en fase de ideación/semilla con correo verificado listos.`);
 
     const savedLeadsOutput: any[] = [];
 
